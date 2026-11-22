@@ -44,7 +44,12 @@ public class Empresa {
     @Column(name = "motivo_arquivamento", columnDefinition = "TEXT")
     private String motivoArquivamento;
 
-    @Column(name = "criado_em", nullable = false)
+    @Column(
+            name = "criado_em",
+            nullable = false,
+            insertable = false,
+            updatable = false
+    )
     private OffsetDateTime criadoEm;
 
     public Empresa(

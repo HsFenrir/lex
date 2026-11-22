@@ -74,5 +74,7 @@ public class PlanoContas {
 
         this.empresaId = empresa.getId();
         this.modeloVersao = modeloPlanoContas.getVersao();
+        this.empresa = empresa;
+        this.modeloPlanoContas = modeloPlanoContas;
     }
 }

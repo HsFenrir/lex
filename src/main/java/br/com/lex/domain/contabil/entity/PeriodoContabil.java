@@ -89,7 +89,21 @@ public class PeriodoContabil {
             LocalDate dataInicio,
             LocalDate dataFim
     ) {
+        if (exercicio == null || exercicio.getId() == null) {
+            throw new IllegalArgumentException(
+                    "O exercício contábil deve estar persistido."
+            );
+        }
+
+        if (exercicio.getEmpresa() == null
+                || exercicio.getEmpresa().getId() == null) {
+            throw new IllegalArgumentException(
+                    "A empresa do exercício deve estar persistida."
+            );
+        }
+
         this.exercicio = exercicio;
+        this.empresa = exercicio.getEmpresa();
         this.mes = mes;
         this.dataInicio = dataInicio;
         this.dataFim = dataFim;

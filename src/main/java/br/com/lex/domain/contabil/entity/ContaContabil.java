@@ -193,5 +193,8 @@ public class ContaContabil {
 
         this.classificacaoBP = modeloContaContabil.getClassificacaoBP();
         this.classificacaoDRE = modeloContaContabil.getClassificacaoDRE();
+
+        this.planoContas = planoContas;
+        this.modeloContaContabil = modeloContaContabil;
     }
 }
