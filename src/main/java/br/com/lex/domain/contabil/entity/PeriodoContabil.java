@@ -50,7 +50,7 @@ public class PeriodoContabil {
     )
     private OffsetDateTime criadoEm;
 
-    @ManyToOne(fetch = FetchType.LAZY)
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumns({
             @JoinColumn(
                     name = "exercicio_id",
