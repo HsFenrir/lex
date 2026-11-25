@@ -3,6 +3,8 @@ package br.com.lex.domain.contabil.entity;
 
 import br.com.lex.domain.contabil.enums.OrigemLancamento;
 import br.com.lex.domain.contabil.enums.StatusLancamento;
+import br.com.lex.domain.contabil.enums.StatusExercicio;
+import br.com.lex.domain.contabil.enums.StatusPeriodo;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -244,8 +246,11 @@ public class LancamentoContabil {
         this.status = StatusLancamento.RASCUNHO;
     }
 
+
     public static LancamentoContabil criarEstorno(
             LancamentoContabil original,
+            ExercicioContabil exercicioDestino,
+            PeriodoContabil periodoDestino,
             Usuario criadoPor,
             LocalDate data,
             String historico
@@ -256,10 +261,69 @@ public class LancamentoContabil {
             );
         }
 
+        if (original.getStatus() != StatusLancamento.CONFIRMADO) {
+            throw new IllegalStateException(
+                    "Somente lançamentos confirmados podem ser estornados."
+            );
+        }
+
+        if (exercicioDestino == null || exercicioDestino.getId() == null) {
+            throw new IllegalArgumentException(
+                    "O exercício de destino deve estar persistido."
+            );
+        }
+
+        if (periodoDestino == null || periodoDestino.getId() == null) {
+            throw new IllegalArgumentException(
+                    "O período de destino deve estar persistido."
+            );
+        }
+
+        if (exercicioDestino.getStatus() != StatusExercicio.ABERTO) {
+            throw new IllegalStateException(
+                    "O exercício de destino deve estar aberto."
+            );
+        }
+
+        if (periodoDestino.getStatus() != StatusPeriodo.ABERTO) {
+            throw new IllegalStateException(
+                    "O período de destino deve estar aberto."
+            );
+        }
+
+        if (!original.getEmpresa().getId()
+                .equals(exercicioDestino.getEmpresa().getId())) {
+            throw new IllegalArgumentException(
+                    "O exercício de destino não pertence à empresa do lançamento original."
+            );
+        }
+
+        if (!original.getEmpresa().getId()
+                .equals(periodoDestino.getEmpresaId())
+                || !exercicioDestino.getId()
+                .equals(periodoDestino.getExercicioId())) {
+            throw new IllegalArgumentException(
+                    "O período de destino não pertence ao exercício e à empresa informados."
+            );
+        }
+
+        if (data == null) {
+            throw new IllegalArgumentException(
+                    "A data do estorno é obrigatória."
+            );
+        }
+
+        if (data.isBefore(periodoDestino.getDataInicio())
+                || data.isAfter(periodoDestino.getDataFim())) {
+            throw new IllegalArgumentException(
+                    "A data do estorno deve estar dentro do período de destino."
+            );
+        }
+
         LancamentoContabil estorno = new LancamentoContabil(
                 original.getEmpresa(),
-                original.getExercicio(),
-                original.getPeriodo(),
+                exercicioDestino,
+                periodoDestino,
                 original.getPlanoContas(),
                 criadoPor,
                 data,

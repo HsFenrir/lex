@@ -2,6 +2,7 @@
 package br.com.lex.domain.contabil.entity;
 
 import br.com.lex.domain.contabil.enums.TipoPartida;
+import br.com.lex.domain.contabil.enums.StatusLancamento;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -89,6 +90,12 @@ public class PartidaContabil {
         if (lancamento == null || lancamento.getId() == null) {
             throw new IllegalArgumentException(
                     "O lançamento deve estar persistido."
+            );
+        }
+
+        if (lancamento.getStatus() != StatusLancamento.RASCUNHO) {
+            throw new IllegalStateException(
+                    "Não é permitido adicionar partidas a um lançamento que não esteja em rascunho."
             );
         }
 
