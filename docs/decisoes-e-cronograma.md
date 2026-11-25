@@ -3,7 +3,9 @@
 Registro original: 22/11/2026. Consolidação: 25/11/2026.
 Janela de desenvolvimento: 23–29/11/2026. Apresentação: 30/11/2026.
 
-## 1. Decisões aprovadas
+## 1. Decisões aprovadas no planejamento original
+
+As decisões sobre escopo e início da interface foram atualizadas na seção 7 após a confirmação do enunciado.
 
 1. Manter a estratégia e a arquitetura atuais; mudanças somente diante de necessidade técnica ou de prazo demonstrada e com aprovação.
 2. Priorizar conclusão e validação do backend antes de acelerar o frontend, sem adiar o frontend para o último dia.
@@ -54,7 +56,7 @@ Janela de desenvolvimento: 23–29/11/2026. Apresentação: 30/11/2026.
 
 ## 5. Situação em 25/11 e retomada
 
-A etapa de persistência foi validada e publicada em 8b8eb2d; ainda é necessário demonstrar cobertura de isolamento entre empresas nos serviços. A atividade de 24/11 está atrasada. O próximo passo é implementar o serviço de rascunhos e partidas, seguido da confirmação. Não alterar as datas originais sem aprovação. Priorizar recuperação do atraso em incrementos testados, sem suprimir testes nem ampliar o escopo. Ver andamento.md para evidências e lacunas.
+A etapa de persistência foi validada e publicada em 8b8eb2d. O primeiro incremento do serviço de lançamentos, previsto originalmente para 24/11, foi aprovado na regressão de 25/11 com 50 testes. O próximo incremento é confirmação com numeração atômica, seguido de estorno completo. Ver [andamento.md](andamento.md) para evidências e pendências.
 
 ## 6. Critérios de sucesso do planejamento original
 
@@ -65,5 +67,22 @@ A etapa de persistência foi validada e publicada em 8b8eb2d; ainda é necessár
 - Estorno validado e contabilmente invertido.
 - Frontend integrado à API nos fluxos essenciais.
 - Ambiente de demonstração inicializável e dados preparados.
+
+## 7. Escopo obrigatório confirmado e meta de recuperação proposta
+
+O enunciado fornecido pelo desenvolvedor confirma a entrega do link e do manual e a obrigatoriedade de Diário, Razão, Balance (registrado como Balancete no planejamento), BP, DRE, estoque com contabilização, ativos com contabilização e depreciação. Esses módulos fazem parte da entrega. Saldos iniciais, fechamento automatizado, PDFs, autenticação e auditoria integram o planejamento de recuperação conforme as orientações de aula e as decisões complementares.
+
+Estoque pelo método PEPS, controle de ativos e depreciação linear mensal devem alimentar o núcleo de lançamentos. Iniciar a interface assim que os contratos essenciais estiverem disponíveis, em paralelo à implementação dos módulos restantes. Os detalhes e a ressalva sobre o modelo de DRE do professor estão em [requisitos-academicos.md](requisitos-academicos.md).
+
+O cronograma abaixo é uma meta de recuperação proposta. É agressivo e sujeito a revisão conforme a evolução efetiva. O cronograma original permanece registrado na seção 4.
+
+| Data | Meta de recuperação |
+|---|---|
+| 25/11 | Concluir o núcleo de lançamentos, confirmação, numeração e estorno. |
+| 26/11 | Saldos iniciais, Diário, Razão, Balancete, BP, DRE e fechamento. |
+| 27/11 | Estoque PEPS, ativos e depreciação com contabilização. |
+| 28/11 | Integração funcional, autenticação, auditoria, interface, PDFs e implantação inicial. |
+| 29/11 | Estabilização, testes ponta a ponta, implantação definitiva, manual e ensaio. |
+| 30/11 | Apresentação e entrega do link e do manual. |
 
 Fonte primária: Decisões e Cronograma 23-30 nov 2026.md, registro de 22/11. Complementos: decisões e resultados da transição ao Codex em 25/11. A organização em seções é editorial; não representa aprovação de novas funcionalidades.

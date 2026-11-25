@@ -1,12 +1,12 @@
 # LEX — Requisitos acadêmicos e critérios de aceitação
 
-Consolidação inicial: 25/11/2026. **Status: parcial; requer conferência com o enunciado integral do professor.**
+Atualização: 25/11/2026, com o enunciado, as orientações de aula e as decisões complementares fornecidos pelo desenvolvedor.
 
 ## 1. Autoridade das fontes
 
 - O documento Decisões e Cronograma 23-30 nov 2026.md, registrado em 22/11, estabelece o planejamento aprovado do LEX. Consultar decisoes-e-cronograma.md.
 - Livro da turma 2026.pdf é referência didática de contabilidade financeira, não um enunciado comprovado de entrega de software.
-- As exigências específicas do professor descritas em outros chats não foram integralmente recuperadas nesta consolidação. Não declarar cobertura integral nem atribuir ao professor requisitos não comprovados.
+- O enunciado original e as orientações complementares de aula foram fornecidos pelo desenvolvedor em 25/11. As decisões de implementação do desenvolvedor estão registradas separadamente na seção 4.
 - Em conflito ou lacuna, solicitar decisão do desenvolvedor antes de ampliar ou reduzir o escopo. Não confundir critérios de engenharia com exigências expressas do professor.
 
 ## 2. Escopo funcional estabelecido pelo planejamento do projeto
@@ -23,6 +23,12 @@ Consolidação inicial: 25/11/2026. **Status: parcial; requer conferência com o
 | F08 | API | Contratos de entrada/saída, validação, tratamento de erros e autorização dos fluxos essenciais. |
 | F09 | Interface | Navegação e telas integradas à API para os fluxos essenciais; não depender de SQL manual para demonstrá-los. |
 | F10 | Demonstração | Ambiente inicializável, dados de exemplo e execução ponta a ponta verificável até a apresentação de 30/11. |
+| F11 | Saldos iniciais e fechamento | Registrar saldos iniciais, com possibilidade de entrada por balancete, e automatizar o fechamento com o mínimo de entradas manuais. |
+| F12 | Livros e demonstrações | Disponibilizar Diário, Razão, Balancete, BP e DRE, além de PDF do histórico de lançamentos e dos livros e demonstrações indicados em aula. |
+| F13 | Estoque | Controlar entradas e saídas relacionadas às vendas pelo método PEPS e integrar a contabilização ao núcleo de lançamentos. |
+| F14 | Ativos e depreciação | Controlar ativos com valor, vida útil e valor residual, contabilizar os fatos e apropriar mensalmente a depreciação linear pelo núcleo de lançamentos. |
+| F15 | Auditoria | Identificar individualmente os lançamentos e manter histórico auditável das modificações, com os campos definidos na seção 4. |
+| F16 | Entrega | Disponibilizar o sistema por link e entregar o manual. |
 
 A tabela é uma decomposição técnica do planejamento, não uma transcrição literal do enunciado acadêmico. A cobertura de cada item deve ser comprovada por implementação e teste.
 
@@ -45,11 +51,44 @@ Referência: Livro da turma 2026.pdf (paginação impressa). Usar a fonte para c
 | 4.4–4.7, p. 52–62 | Depreciação, amortização, exaustão e PECLD: referências de fatos contábeis; automação específica depende de escopo confirmado. |
 | 5, p. 68 | Fluxo de caixa: referência didática; não confundir caixa com resultado por competência. |
 
-## 4. Relatórios e funcionalidades com obrigatoriedade acadêmica a confirmar
+## 4. Enunciado, orientações de aula e decisões complementares
 
-O material didático aborda Livro Diário, Livro Razão, razonetes, balancete, balanço patrimonial, DRE e fluxo de caixa. O cronograma recuperado não especifica expressamente quais desses relatórios devem estar implementados na entrega. Verificar o enunciado original e as decisões anteriores antes de classificá-los como obrigatórios, opcionais ou fora do escopo. Se confirmados, planejar a entrega dentro do prazo e registrar decisão.
+### Enunciado original informado pelo desenvolvedor
 
-Critérios sugeridos para os relatórios, **se aprovados no escopo**: cálculo a partir de partidas de lançamentos efetivados (incluindo o original estornado e seu estorno confirmado nos períodos correspondentes); excluir rascunhos; respeitar empresa e corte temporal; evitar dupla contagem por agregação de contas sintéticas; reconciliar saldos e totais com o Razão e o Diário. A forma de encerramento e apresentação do resultado deve ser validada antes de implementar BP/DRE.
+Entregar o link do sistema contábil e o manual. O sistema será utilizado para a abertura empresarial dos alunos do técnico em administração e deve conter:
+
+- Livro Diário.
+- Livro Razão.
+- Balance.
+- Balanço Patrimonial.
+- DRE.
+- Controle de estoque, com contabilização.
+- Controle de ativos no geral, com contabilização.
+- Controle de depreciação.
+
+O termo “Balance” é mantido como fornecido no enunciado. O planejamento usa “Balancete”, conforme as orientações de aula.
+
+### Orientações complementares de aula
+
+- Disponibilizar um sistema acessível, com login, histórico de operações e persistência das empresas e valores.
+- Permitir entrada de saldos iniciais, inclusive via balancete, e identificar cada lançamento por registro ou referência individual.
+- Manter histórico de todas as modificações para garantir auditabilidade.
+- Considerar o sistema do Moodle como possível referência inicial.
+- Gerar PDF do histórico de lançamentos, dos principais livros, do balancete, do balanço patrimonial e da DRE.
+- Permitir automatizar o fechamento e considerar o modelo de DRE a ser disponibilizado pelo professor.
+- Controlar entradas e saídas de estoque relacionadas às vendas e registrar valor, vida útil e valor residual dos ativos.
+
+### Decisões complementares do desenvolvedor
+
+- Usar o método PEPS no estoque e depreciação linear com apropriação mensal, considerando vida útil e valor residual.
+- Adotar um modelo de DRE adequado ao projeto. A orientação acadêmica menciona um modelo específico do professor. Sua disponibilidade e eventuais diferenças de formato continuam pendentes de conferência.
+- Automatizar o fechamento contábil, minimizando entradas manuais.
+- Registrar na auditoria usuário, empresa, data, operação, entidade, identificador e valores anteriores e posteriores quando aplicável.
+- Integrar estoque, ativos e depreciação ao núcleo de lançamentos contábeis. Todos os módulos obrigatórios compõem a entrega.
+- Dispensar o sistema do Moodle como referência para a implementação.
+- Manter DFC, amortização e exaustão fora do escopo confirmado, salvo nova exigência documentada. Razonetes permanecem como referência didática.
+
+Os relatórios devem partir de partidas efetivadas, considerando o original estornado e o estorno confirmado nos respectivos períodos, excluindo rascunhos e respeitando empresa e corte temporal. Evitar dupla contagem na agregação de contas sintéticas e reconciliar saldos e totais com Razão e Diário. Validar a forma de encerramento e apresentação do resultado antes de implementar BP e DRE.
 
 ## 5. Critérios técnicos transversais
 
@@ -63,9 +102,8 @@ Critérios sugeridos para os relatórios, **se aprovados no escopo**: cálculo a
 
 ## 6. Limites e itens a confirmar com a fonte primária
 
-- Enunciado integral do trabalho, rubrica de avaliação, requisitos de entrega e formato da apresentação.
-- Relatórios contábeis efetivamente obrigatórios, filtros, exportações, apresentação gráfica e exemplos exigidos.
-- Necessidade de módulos específicos de estoque, imobilizado e depreciação. O planejamento determina não priorizá-los sem exigência explícita.
-- Requisitos de autenticação, papéis, tecnologias obrigatórias, implantação e documentação formal, se houver.
+- Rubrica de avaliação, formato da apresentação e eventuais instruções adicionais para o link, o manual e a implantação.
+- Modelo de DRE do professor e eventuais filtros, exemplos, formatos gráficos ou exportações adicionais aos PDFs já indicados.
+- Detalhes de papéis, tecnologias exigidas e critérios específicos de acessibilidade, se houver.
 
 Não assumir que esses itens são dispensáveis nem inventar requisitos. Atualizar este arquivo quando a especificação original for localizada; registrar a origem e a decisão. O objetivo é a entrega de um sistema funcional aderente às exigências reais do professor, não apenas uma suíte de testes verde.
