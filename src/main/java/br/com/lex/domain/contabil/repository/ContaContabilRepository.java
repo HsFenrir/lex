@@ -10,6 +10,8 @@ import java.util.UUID;
 public interface ContaContabilRepository
         extends JpaRepository<ContaContabil, UUID> {
 
+    Optional<ContaContabil> findByIdAndPlanoContasId(UUID id, UUID planoContasId);
+
     List<ContaContabil> findAllByPlanoContasIdOrderByCodigoAsc(
             UUID planoContasId
     );

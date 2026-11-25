@@ -1,8 +1,9 @@
 
 package br.com.lex.domain.contabil.entity;
 
-import br.com.lex.domain.contabil.enums.TipoPartida;
 import br.com.lex.domain.contabil.enums.StatusLancamento;
+import br.com.lex.domain.contabil.enums.TipoConta;
+import br.com.lex.domain.contabil.enums.TipoPartida;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -17,6 +18,9 @@ import java.util.UUID;
 @Table(name = "partida_contabil")
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class PartidaContabil {
+
+    private static final int PRECISAO_VALOR = 19;
+    private static final int ESCALA_VALOR = 2;
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -38,8 +42,8 @@ public class PartidaContabil {
     @Column(
             name = "valor",
             nullable = false,
-            precision = 19,
-            scale = 2
+            precision = PRECISAO_VALOR,
+            scale = ESCALA_VALOR
     )
     private BigDecimal valor;
 
@@ -112,6 +116,13 @@ public class PartidaContabil {
             );
         }
 
+        if (!Boolean.TRUE.equals(contaContabil.getAtiva())
+                || contaContabil.getTipo() != TipoConta.ANALITICA) {
+            throw new IllegalArgumentException(
+                    "A conta contábil deve ser analítica e ativa."
+            );
+        }
+
         if (tipo == null) {
             throw new IllegalArgumentException(
                     "O tipo da partida é obrigatório."
@@ -124,8 +135,14 @@ public class PartidaContabil {
             );
         }
 
+        if ((long) valor.precision() - valor.scale() > PRECISAO_VALOR - ESCALA_VALOR) {
+            throw new IllegalArgumentException(
+                    "O valor da partida não pode possuir mais de 17 dígitos inteiros."
+            );
+        }
+
         try {
-            valor = valor.setScale(2, RoundingMode.UNNECESSARY);
+            valor = valor.setScale(ESCALA_VALOR, RoundingMode.UNNECESSARY);
         } catch (ArithmeticException e) {
             throw new IllegalArgumentException(
                     "O valor da partida não pode possuir mais de duas casas decimais.",
