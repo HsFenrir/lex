@@ -18,6 +18,7 @@ import br.com.lex.domain.contabil.repository.EmpresaRepository;
 import br.com.lex.domain.contabil.repository.ExercicioContabilRepository;
 import br.com.lex.domain.contabil.repository.LancamentoContabilRepository;
 import br.com.lex.domain.contabil.repository.PartidaContabilRepository;
+import br.com.lex.domain.contabil.repository.PartidaContabilRepository.DadosPartida;
 import br.com.lex.domain.contabil.repository.PeriodoContabilRepository;
 import br.com.lex.domain.contabil.repository.PlanoContasRepository;
 import br.com.lex.domain.contabil.repository.SequenciaLancamentoRepository;
@@ -32,8 +33,10 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /** O usuarioId deve identificar o usuário autenticado pelo chamador. */
 @Service
@@ -82,12 +85,8 @@ public class LancamentoContabilService {
         Usuario usuario = buscarUsuarioAtivo(usuarioId);
         Empresa empresa = buscarEmpresaAutorizada(empresaId, usuarioId);
 
-        ExercicioContabil exercicio = exercicioRepository
-                .findByIdAndEmpresaId(exercicioId, empresaId)
-                .orElseThrow(() -> new IllegalArgumentException("Exercício não encontrado na empresa."));
-        PeriodoContabil periodo = periodoRepository
-                .findByIdAndEmpresaIdAndExercicioId(periodoId, empresaId, exercicioId)
-                .orElseThrow(() -> new IllegalArgumentException("Período não encontrado no exercício da empresa."));
+        ExercicioContabil exercicio = buscarExercicio(empresaId, exercicioId);
+        PeriodoContabil periodo = buscarPeriodo(empresaId, exercicioId, periodoId);
 
         validarCalendario(exercicio, periodo, data);
 
@@ -122,50 +121,187 @@ public class LancamentoContabilService {
     public LancamentoContabil confirmarLancamento(UUID empresaId, UUID usuarioId, UUID lancamentoId) {
         Usuario usuario = buscarUsuarioAtivo(usuarioId);
         Empresa empresa = buscarEmpresaAutorizada(empresaId, usuarioId);
-        LancamentoContabil lancamento = buscarParaAlteracao(empresaId, lancamentoId);
-        entityManager.flush();
-        entityManager.refresh(lancamento, LockModeType.PESSIMISTIC_WRITE);
+        LancamentoContabil lancamento = bloquearLancamentoAtualizado(empresaId, lancamentoId);
         validarRascunho(lancamento, "O lançamento deve estar em rascunho.");
         if (lancamento.getOrigem() == OrigemLancamento.ESTORNO) {
             throw new IllegalStateException("A confirmação de estorno exige o tratamento do lançamento original.");
         }
 
-        ExercicioContabil exercicio = exercicioRepository.findByIdAndEmpresaId(lancamento.getExercicioId(), empresaId)
-                .orElseThrow(() -> new IllegalArgumentException("Exercício não encontrado na empresa."));
-        PeriodoContabil periodo = periodoRepository
-                .findByIdAndEmpresaIdAndExercicioId(lancamento.getPeriodoId(), empresaId, exercicio.getId())
-                .orElseThrow(() -> new IllegalArgumentException("Período não encontrado no exercício da empresa."));
-
-        // Ordem: lançamento, período, exercício, empresa, usuário, contas por ID, sequência.
-        // Os três primeiros vínculos protegidos após o lançamento seguem a ordem do trigger da V5.
-        entityManager.refresh(periodo, LockModeType.PESSIMISTIC_READ);
-        entityManager.refresh(exercicio, LockModeType.PESSIMISTIC_READ);
-        entityManager.refresh(empresa, LockModeType.PESSIMISTIC_READ);
-        entityManager.refresh(usuario, LockModeType.PESSIMISTIC_READ);
-        validarUsuarioAtivo(usuario);
-        if (!empresa.getUsuario().getId().equals(usuarioId)) {
-            throw new IllegalArgumentException("Empresa não encontrada ou não pertence ao usuário.");
-        }
-        validarEmpresaAtiva(empresa);
-        validarCalendario(exercicio, periodo, lancamento.getData());
-        validarPartidasParaConfirmacao(lancamento);
-
-        long numero = sequenciaRepository.alocarNumero(empresaId, exercicio.getId())
-                .orElseThrow(() -> new IllegalStateException("A numeração contábil do exercício atingiu o limite."));
-        lancamento.confirmar(numero, usuario, OffsetDateTime.now());
-        lancamentoRepository.flush();
+        validarConfirmacao(lancamento, empresa, usuario);
+        registrarConfirmacao(lancamento, usuario);
         return lancamento;
     }
 
-    private void validarPartidasParaConfirmacao(LancamentoContabil lancamento) {
-        List<PartidaContabil> partidas = partidaRepository.findAllByLancamentoIdOrderByIdAsc(lancamento.getId());
+    @Transactional
+    public LancamentoContabil criarRascunhoEstorno(
+            UUID empresaId, UUID usuarioId, UUID lancamentoOriginalId, UUID exercicioDestinoId,
+            UUID periodoDestinoId, LocalDate data, String historico
+    ) {
+        Usuario usuario = buscarUsuarioAtivo(usuarioId);
+        Empresa empresa = buscarEmpresaAutorizada(empresaId, usuarioId);
+        LancamentoContabil original = bloquearLancamentoAtualizado(empresaId, lancamentoOriginalId);
+        validarOriginalConfirmado(original);
+        validarOrigemEstornavel(original);
+        if (lancamentoRepository.findByEstornoDeIdAndEmpresaId(original.getId(), empresaId).isPresent()) {
+            throw new IllegalStateException("O lançamento original já possui um estorno associado.");
+        }
+        validarDataEstorno(original, data);
+
+        ExercicioContabil exercicio = buscarExercicio(empresaId, exercicioDestinoId);
+        PeriodoContabil periodo = buscarPeriodo(empresaId, exercicioDestinoId, periodoDestinoId);
+        bloquearEValidarDestino(exercicio, periodo, empresa, usuario, data);
+        List<DadosPartida> partidas = buscarPartidas(original);
+        validarPartidasParaConfirmacao(original, partidas);
+
+        LancamentoContabil estorno = lancamentoRepository.save(
+                LancamentoContabil.criarEstorno(original, exercicio, periodo, usuario, data, historico)
+        );
+        partidaRepository.saveAllAndFlush(partidas.stream()
+                .map(partida -> new PartidaContabil(estorno, contaRepository.getReferenceById(partida.getContaContabilId()),
+                        inverter(partida.getTipo()), partida.getValor(), partida.getHistorico()))
+                .toList());
+        return estorno;
+    }
+
+    @Transactional
+    public LancamentoContabil confirmarEstorno(UUID empresaId, UUID usuarioId, UUID estornoId) {
+        Usuario usuario = buscarUsuarioAtivo(usuarioId);
+        Empresa empresa = buscarEmpresaAutorizada(empresaId, usuarioId);
+        EstornoBloqueado vinculo = bloquearEstorno(empresaId, estornoId);
+        LancamentoContabil original = vinculo.original();
+        LancamentoContabil estorno = vinculo.estorno();
+        validarOrigemEstornavel(original);
+        validarDataEstorno(original, estorno.getData());
+        if (!original.getPlanoContasId().equals(estorno.getPlanoContasId())) {
+            throw new IllegalStateException("O estorno deve utilizar o plano de contas do original.");
+        }
+
+        List<DadosPartida> partidas = validarConfirmacao(estorno, empresa, usuario);
+        if (!contarPartidas(buscarPartidas(original), true).equals(contarPartidas(partidas, false))) {
+            throw new IllegalStateException("As partidas do estorno não correspondem à inversão integral do original.");
+        }
+        registrarConfirmacao(estorno, usuario);
+        original.marcarComoEstornado();
+        lancamentoRepository.flush();
+        return estorno;
+    }
+
+    @Transactional
+    public void cancelarRascunhoEstorno(UUID empresaId, UUID usuarioId, UUID estornoId) {
+        Usuario usuario = buscarUsuarioAtivo(usuarioId);
+        Empresa empresa = buscarEmpresaAutorizada(empresaId, usuarioId);
+        LancamentoContabil estorno = bloquearEstorno(empresaId, estornoId).estorno();
+        bloquearEValidarAutorizacao(empresa, usuario);
+
+        partidaRepository.deleteAll(partidaRepository.findAllByLancamentoIdOrderByIdAsc(estorno.getId()));
+        partidaRepository.flush();
+        lancamentoRepository.delete(estorno);
+        lancamentoRepository.flush();
+    }
+
+    private EstornoBloqueado bloquearEstorno(UUID empresaId, UUID estornoId) {
+        LancamentoContabil referencia = lancamentoRepository.findByIdAndEmpresaId(estornoId, empresaId)
+                .orElseThrow(() -> new IllegalArgumentException("Lançamento não encontrado na empresa."));
+        UUID originalId = referencia.getEstornoDeId();
+        if (referencia.getOrigem() != OrigemLancamento.ESTORNO || originalId == null) {
+            throw new IllegalArgumentException("O lançamento informado não é um estorno.");
+        }
+
+        // Criação, confirmação e cancelamento serializam a reserva pelo original primeiro.
+        LancamentoContabil original = bloquearLancamentoAtualizado(empresaId, originalId);
+        LancamentoContabil estorno = bloquearLancamentoAtualizado(empresaId, estornoId);
+        if (estorno.getOrigem() != OrigemLancamento.ESTORNO || !originalId.equals(estorno.getEstornoDeId())) {
+            throw new IllegalStateException("O vínculo do estorno foi alterado.");
+        }
+        validarRascunho(estorno, "O estorno deve estar em rascunho.");
+        validarOriginalConfirmado(original);
+        return new EstornoBloqueado(original, estorno);
+    }
+
+    private void validarOriginalConfirmado(LancamentoContabil original) {
+        if (original.getStatus() != StatusLancamento.CONFIRMADO) {
+            throw new IllegalStateException("O lançamento original deve estar confirmado.");
+        }
+    }
+
+    private void validarOrigemEstornavel(LancamentoContabil original) {
+        switch (original.getOrigem()) {
+            case MANUAL, ABERTURA -> { }
+            case ESTORNO -> throw new IllegalStateException("Um lançamento de estorno não pode ser estornado.");
+            default -> throw new IllegalStateException("O lançamento exige reversão pelo módulo de origem.");
+        }
+    }
+
+    private void validarDataEstorno(LancamentoContabil original, LocalDate data) {
+        if (data == null || data.isBefore(original.getData())) {
+            throw new IllegalArgumentException("A data do estorno deve ser igual ou posterior à data do original.");
+        }
+    }
+
+    private Map<ChavePartida, Long> contarPartidas(List<DadosPartida> partidas, boolean inverterTipo) {
+        return partidas.stream().collect(Collectors.groupingBy(
+                partida -> new ChavePartida(partida.getContaContabilId(),
+                        inverterTipo ? inverter(partida.getTipo()) : partida.getTipo(),
+                        PartidaContabil.normalizarValor(partida.getValor())),
+                Collectors.counting()
+        ));
+    }
+
+    private TipoPartida inverter(TipoPartida tipo) {
+        return switch (tipo) {
+            case DEBITO -> TipoPartida.CREDITO;
+            case CREDITO -> TipoPartida.DEBITO;
+        };
+    }
+
+    private List<DadosPartida> buscarPartidas(LancamentoContabil lancamento) {
+        return partidaRepository.findAllProjetadasByLancamentoIdOrderByIdAsc(lancamento.getId());
+    }
+
+    private List<DadosPartida> validarConfirmacao(LancamentoContabil lancamento, Empresa empresa, Usuario usuario) {
+        ExercicioContabil exercicio = buscarExercicio(empresa.getId(), lancamento.getExercicioId());
+        PeriodoContabil periodo = buscarPeriodo(empresa.getId(), exercicio.getId(), lancamento.getPeriodoId());
+        bloquearEValidarDestino(exercicio, periodo, empresa, usuario, lancamento.getData());
+        List<DadosPartida> partidas = buscarPartidas(lancamento);
+        validarPartidasParaConfirmacao(lancamento, partidas);
+        return partidas;
+    }
+
+    private void bloquearEValidarDestino(
+            ExercicioContabil exercicio, PeriodoContabil periodo, Empresa empresa, Usuario usuario, LocalDate data
+    ) {
+        // Após os lançamentos: período, exercício, empresa, usuário, contas por ID e sequência.
+        entityManager.refresh(periodo, LockModeType.PESSIMISTIC_READ);
+        entityManager.refresh(exercicio, LockModeType.PESSIMISTIC_READ);
+        bloquearEValidarAutorizacao(empresa, usuario);
+        validarCalendario(exercicio, periodo, data);
+    }
+
+    private void bloquearEValidarAutorizacao(Empresa empresa, Usuario usuario) {
+        entityManager.refresh(empresa, LockModeType.PESSIMISTIC_READ);
+        entityManager.refresh(usuario, LockModeType.PESSIMISTIC_READ);
+        validarUsuarioAtivo(usuario);
+        if (!empresa.getUsuario().getId().equals(usuario.getId())) {
+            throw new IllegalArgumentException("Empresa não encontrada ou não pertence ao usuário.");
+        }
+        validarEmpresaAtiva(empresa);
+    }
+
+    private void registrarConfirmacao(LancamentoContabil lancamento, Usuario usuario) {
+        long numero = sequenciaRepository.alocarNumero(lancamento.getEmpresaId(), lancamento.getExercicioId())
+                .orElseThrow(() -> new IllegalStateException("A numeração contábil do exercício atingiu o limite."));
+        lancamento.confirmar(numero, usuario, OffsetDateTime.now());
+        lancamentoRepository.flush();
+    }
+
+    private void validarPartidasParaConfirmacao(LancamentoContabil lancamento, List<DadosPartida> partidas) {
         if (partidas.size() < 2) {
             throw new IllegalStateException("Um lançamento deve possuir pelo menos duas partidas para confirmação.");
         }
         Set<UUID> contas = new HashSet<>();
         BigDecimal debitos = BigDecimal.ZERO;
         BigDecimal creditos = BigDecimal.ZERO;
-        for (PartidaContabil partida : partidas) {
+        for (DadosPartida partida : partidas) {
             contas.add(partida.getContaContabilId());
             BigDecimal valor = PartidaContabil.normalizarValor(partida.getValor());
             switch (partida.getTipo()) {
@@ -191,6 +327,16 @@ public class LancamentoContabilService {
         if (data == null || data.isBefore(periodo.getDataInicio()) || data.isAfter(periodo.getDataFim())) {
             throw new IllegalArgumentException("A data do lançamento deve estar dentro do período.");
         }
+    }
+
+    private ExercicioContabil buscarExercicio(UUID empresaId, UUID exercicioId) {
+        return exercicioRepository.findByIdAndEmpresaId(exercicioId, empresaId)
+                .orElseThrow(() -> new IllegalArgumentException("Exercício não encontrado na empresa."));
+    }
+
+    private PeriodoContabil buscarPeriodo(UUID empresaId, UUID exercicioId, UUID periodoId) {
+        return periodoRepository.findByIdAndEmpresaIdAndExercicioId(periodoId, empresaId, exercicioId)
+                .orElseThrow(() -> new IllegalArgumentException("Período não encontrado no exercício da empresa."));
     }
 
     private Usuario buscarUsuarioAtivo(UUID usuarioId) {
@@ -225,8 +371,18 @@ public class LancamentoContabilService {
     private LancamentoContabil bloquearRascunhoAutorizado(UUID empresaId, UUID usuarioId, UUID lancamentoId) {
         buscarUsuarioAtivo(usuarioId);
         buscarEmpresaAutorizada(empresaId, usuarioId);
-        LancamentoContabil lancamento = buscarParaAlteracao(empresaId, lancamentoId);
+        LancamentoContabil lancamento = bloquearLancamentoAtualizado(empresaId, lancamentoId);
         validarRascunho(lancamento, "Somente lançamentos em rascunho podem ter partidas alteradas.");
+        if (lancamento.getOrigem() == OrigemLancamento.ESTORNO) {
+            throw new IllegalStateException("As partidas de um estorno são geradas automaticamente.");
+        }
+        return lancamento;
+    }
+
+    private LancamentoContabil bloquearLancamentoAtualizado(UUID empresaId, UUID lancamentoId) {
+        LancamentoContabil lancamento = buscarParaAlteracao(empresaId, lancamentoId);
+        entityManager.flush();
+        entityManager.refresh(lancamento, LockModeType.PESSIMISTIC_WRITE);
         return lancamento;
     }
 
@@ -240,4 +396,8 @@ public class LancamentoContabilService {
             throw new IllegalStateException(mensagem);
         }
     }
+
+    private record EstornoBloqueado(LancamentoContabil original, LancamentoContabil estorno) { }
+
+    private record ChavePartida(UUID contaId, TipoPartida tipo, BigDecimal valor) { }
 }

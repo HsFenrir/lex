@@ -225,13 +225,8 @@ class ConfirmacaoLancamentoContabilServiceTest {
     void rejeitaConfirmacaoGenericaDeEstornoMesmoComPartidasValidas() {
         Cenario dados = criarCenario();
         LancamentoContabil original = confirmar(dados, criarBalanceado(dados, VALOR));
-        LancamentoContabil estorno = lancamentos.save(LancamentoContabil.criarEstorno(
-                original, exercicios.findById(dados.exercicioId()).orElseThrow(),
-                periodos.findById(dados.periodoId()).orElseThrow(), usuarios.findById(dados.usuarioId()).orElseThrow(),
-                dados.data(), "Estorno de teste"
-        ));
-        adicionar(dados, estorno.getId(), TipoPartida.CREDITO, VALOR);
-        adicionar(dados, estorno.getId(), TipoPartida.DEBITO, VALOR);
+        LancamentoContabil estorno = service.criarRascunhoEstorno(dados.empresaId(), dados.usuarioId(),
+                original.getId(), dados.exercicioId(), dados.periodoId(), dados.data(), "Estorno de teste");
 
         IllegalStateException erro = assertThrows(IllegalStateException.class, () -> confirmar(dados, estorno.getId()));
         assertTrue(erro.getMessage().contains("estorno"));
