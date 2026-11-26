@@ -1,19 +1,18 @@
 # LEX — Andamento e passagem de contexto
 
-Atualização: 25/11/2026, após validação do incremento 3. Apresentação: 30/11/2026.
+Atualização em 25/11/2026, após a conclusão antecipada do incremento 4A. Apresentação em 30/11/2026.
 
 ## 1. Base verificada
 
 - Branch main sincronizada com origin/main e origin/HEAD segundo o log de push fornecido pelo desenvolvedor.
-- Checkpoint 8b8eb2d — test: validate accounting persistence and isolate test database; 14 arquivos, 789 inserções e 4 exclusões.
-- Commit anterior 08a584e — feat: adicionar entidades de lancamentos contabeis.
-- AGENTS.md e documentação inicial publicados em 9d41a94. Incremento 1 publicado em 54a4b39, script de testes em 9fbd7d1, escopo acadêmico confirmado em 1bf3fbc e incremento 2 publicado em 47cf2a8. O incremento 3 foi concluído e validado, com commit pendente.
+- Checkpoint `edf11d1`, com o incremento 3 de estorno e cancelamento. O incremento 4A foi concluído em 25/11 como antecipação parcial das atividades previstas para 26/11 e está apto para commit.
+- AGENTS.md e documentação inicial publicados em 9d41a94. Incremento 1 publicado em 54a4b39, script de testes em 9fbd7d1, escopo acadêmico confirmado em 1bf3fbc e incremento 2 publicado em 47cf2a8.
 - Java 21.0.10, Maven Wrapper (Maven 3.10.1 relatado pelo Codex), Spring Boot 4.1.2, Hibernate ORM 7.4.13.Final, PostgreSQL 18.4, conforme relatórios/logs locais. Conferir pom.xml antes de mudanças.
-- No incremento 3, foram compiladas 34 fontes principais e nove fontes de teste. Flyway V1–V6 validado, schema `public` na V6 e Hibernate em `ddl-auto: validate`.
+- No incremento 4A, foram compiladas 36 fontes principais e dez fontes de teste. Flyway V1–V6 validado, schema `public` na V6 e Hibernate em `ddl-auto: validate`.
 
 ## 2. Evidência de regressão
 
-O desenvolvedor executou `.\scripts\test.ps1` em 25/11/2026, com término às 23:01:02 (UTC−03:00), duração de 45,763 segundos e `BUILD SUCCESS`. Os nove relatórios Surefire correspondem à implementação atual e confirmam **87 testes, zero falhas, zero erros e zero ignorados**, com 19 casos de estorno e os 68 casos anteriores.
+O desenvolvedor executou `.\scripts\test.ps1` em 25/11/2026, com término às 23:24:49 (UTC−03:00), duração de 48,323 segundos e `BUILD SUCCESS`. Os dez relatórios Surefire confirmam **92 testes, zero falhas, zero erros e zero ignorados**, incluindo os cinco casos do Livro Diário e os 87 testes anteriores. As classes dos quatro arquivos do incremento foram compiladas após a última alteração nas fontes e antes da geração dos relatórios. Os cinco métodos de teste do Diário coincidem com os casos registrados no Surefire.
 
 Perfil Spring `test`, PostgreSQL 18.4 em `jdbc:postgresql://127.0.0.1:5432/lex_test`. Foram validadas seis migrations, com o schema `public` na V6 e aplicação integral de V1 a V6 em nove schemas descartáveis: três para confirmação e seis para estorno. Os testes aguardam o encerramento das threads com timeout e programam a remoção de cada schema gerado em `finally`. O script exige a role `lex_test_runner` e a ausência de privilégio `CONNECT` em `lex_dev` antes de iniciar o Maven.
 
@@ -22,13 +21,14 @@ Perfil Spring `test`, PostgreSQL 18.4 em `jdbc:postgresql://127.0.0.1:5432/lex_t
 | EstornoLancamentoContabilServiceTest | 19 |
 | ConfirmacaoLancamentoContabilServiceTest | 18 |
 | LancamentoContabilServiceTest | 25 |
+| LivroDiarioServiceTest | 5 |
 | PlanoContasServiceTest | 8 |
 | ContaContabilRepositoryTest | 4 |
 | LancamentoContabilRepositoryTest | 6 |
 | PartidaContabilRepositoryTest | 5 |
 | PlanoContasRepositoryTest | 1 |
 | LexApplicationTests | 1 |
-| Total | 87 |
+| Total | 92 |
 
 Os cenários negativos incluem violações esperadas das chaves estrangeiras `fk_conta_pai` e `fk_conta_reduzida` e das regras de unicidade `uq_lancamento_estorno_unico` e `uq_lancamento_numero_empresa_exercicio`. Os testes respectivos passaram. A colisão de número foi provocada após a alocação para verificar que o lançamento permanece em rascunho e a atualização do contador é revertida.
 
@@ -46,6 +46,7 @@ Na validação do incremento 1, em 25/11 às 01:46:32 (UTC−03:00), `.\mvnw.cmd
 | Lançamento/partida | Entidades e repositórios, mapeamentos compostos e testes de persistência aprovados. |
 | Sequência | Alocação atômica validada, com contador independente por empresa e exercício. |
 | Serviços de lançamento | Incrementos 1 a 3 validados. Criação de rascunho, inclusão e remoção de partidas manuais, confirmação com numeração atômica e estorno completo disponíveis. |
+| Livro Diário | Incremento 4A validado. Serviço de emissão e consulta compartilhada de partidas escrituradas disponíveis. |
 | API/frontend | Estado completo a inspecionar; integração essencial pendente. |
 
 ### Arquivos e contratos do incremento 1
@@ -86,6 +87,16 @@ O bloqueio do original precede o do estorno existente. Os demais recursos seguem
 
 As reversões de lançamentos de origem operacional dependem de integração futura com os respectivos módulos, incluindo estoque, ativos, depreciação e fechamento. O registro efetivo do fluxo na auditoria também permanece pendente.
 
+### Contrato do incremento 4A
+
+`LivroDiarioService.emitir(UUID empresaId, UUID usuarioId, UUID exercicioId, LocalDate inicio, LocalDate fim)` retorna um `LivroDiario` para um intervalo inclusivo contido no exercício. A emissão exige usuário ativo e titular de uma empresa ativa e não arquivada. O serviço valida o exercício no escopo da empresa. As chaves estrangeiras compostas garantem o vínculo dos períodos dos lançamentos com o exercício e a empresa.
+
+`PartidaContabilRepository.buscarMovimentosEscriturados(UUID empresaId, UUID exercicioId, LocalDate inicio, LocalDate fim)` é a consulta compartilhada. Retorna uma projeção escalar `MovimentoEscriturado` por partida em um único SQL, com os dados do lançamento, da conta e a referência do original quando houver estorno. Filtra por empresa, exercício e data contábil, com ordenação por data, número, UUID do lançamento e UUID da partida. Inclui lançamentos `CONFIRMADOS` e originais `ESTORNADOS`, preservando original e estorno em suas respectivas datas. Exclui `RASCUNHOS` e permite consultar exercícios e períodos encerrados e contas posteriormente inativadas. A descrição da conta vem do cadastro atual no momento da consulta.
+
+O serviço agrupa as linhas em DTOs imutáveis, com listas copiadas e sem expor entidades JPA. O retorno identifica empresa, exercício e intervalo, preserva lançamentos e partidas individuais e inclui referências, históricos, origem e status. Os totais de débito e crédito por lançamento e por intervalo são calculados em `BigDecimal` a partir das mesmas linhas retornadas. A consulta única de movimentos evita N+1.
+
+A emissão abre uma transação de leitura com `REPEATABLE_READ` quando executada sem transação externa, mantendo autorização, exercício e movimentos no mesmo snapshot. Se a chamada participar de uma transação externa com isolamento inferior, prevalece o isolamento externo e as validações e a consulta podem usar snapshots diferentes. Cabeçalhos, partidas e referências ainda compartilham o snapshot da instrução SQL de movimentos.
+
 ## 4. Ambiente de execução
 
 | Perfil | JDBC | Role | Variáveis |
@@ -108,11 +119,11 @@ O padrão é `.\mvnw.cmd -o clean test`. Use `-Online` quando for necessário ob
 
 O script verifica variáveis e arquivos locais que podem sobrescrever a execução, solicita a senha de `lex_test_runner` no terminal e exige a resposta `lex_test|lex_test_runner|5432|f` do `psql` antes de iniciar o Maven. `PGPASSWORD` é removida logo após a consulta e `TEST_DB_*` é limpo ao final, inclusive em caso de falha. Consulte `$LASTEXITCODE` para o resultado da execução e confira o destino nos logs do Spring e do Flyway.
 
-O modo padrão do script foi validado nas suítes de 68 e 87 testes. Para JUnit no IntelliJ, use `TEST_DB_*` nas configurações locais All in lex e LexApplicationTests. A atualização dessas configurações ainda não foi confirmada. Uma IDE já aberta não herda variáveis de um novo terminal.
+O modo padrão do script foi validado nas suítes de 68, 87 e 92 testes. Para JUnit no IntelliJ, use `TEST_DB_*` nas configurações locais All in lex e LexApplicationTests. A atualização dessas configurações ainda não foi confirmada. Uma IDE já aberta não herda variáveis de um novo terminal.
 
-## 5. Próxima etapa: saldos iniciais, escrituração, demonstrações e fechamento
+## 5. Próxima etapa — Livro Razão e apuração compartilhada de saldos
 
-As metas de implementação e validação do núcleo de lançamentos previstas para 25/11 foram concluídas. A próxima etapa prevista abrange saldos iniciais, Diário, Razão, Balancete, Balanço Patrimonial, DRE e fechamento automatizado.
+Com o Livro Diário concluído no incremento 4A, a próxima etapa é implementar o Livro Razão e a apuração compartilhada de saldos a partir dos movimentos efetivamente escriturados.
 
 **Regra da escrituração efetiva.** Lançamentos `CONFIRMADOS`, inclusive os estornos confirmados, e lançamentos originais `ESTORNADOS` integram a escrituração. Cada um produz efeitos na sua própria data contábil, respeitado o corte do relatório. Lançamentos em `RASCUNHO` ficam fora dos saldos. O original e seu estorno podem produzir efeitos em períodos diferentes.
 
@@ -120,6 +131,7 @@ As metas de implementação e validação do núcleo de lançamentos previstas p
 
 - P0: saldos iniciais, escrituração, demonstrações e fechamento automatizado. Na sequência, estoque PEPS, ativos e depreciação, conforme a meta de recuperação em [decisoes-e-cronograma.md](decisoes-e-cronograma.md).
 - P0: entregar link e manual. O enunciado confirma Diário, Razão, Balance (Balancete no planejamento), BP, DRE e os módulos de estoque, ativos e depreciação. Ver [requisitos-academicos.md](requisitos-academicos.md) para orientações de aula, PDFs e a ressalva do modelo de DRE.
+- O projeto adotará um modelo próprio de DRE, conforme a decisão já registrada. A implementação pode avançar enquanto permanece a ressalva acadêmica sobre a disponibilidade do modelo do professor e eventuais diferenças de formato. [Requisitos acadêmicos](requisitos-academicos.md#4-enunciado-orientações-de-aula-e-decisões-complementares).
 - P1: integrar autenticação e utilização efetiva da auditoria, conectar o estorno às reversões operacionais e ampliar a cobertura de isolamento para os próximos fluxos. Avaliar proteção adicional contra destino errado antes do contexto Spring.
 - P1: um contador legado defasado pode colidir com número já utilizado. A restrição de unicidade rejeita a confirmação e a transação reverte a alocação. A reconciliação de dados legados permanece pendente caso a divergência seja encontrada.
 - P1 segurança: fallbacks antigos de credenciais foram removidos, mas valores anteriores podem persistir no histórico Git. Classificar e rotacionar se reais; remoção do arquivo atual não elimina exposição histórica. Não reescrever histórico sem aprovação.
@@ -131,6 +143,7 @@ As metas de implementação e validação do núcleo de lançamentos previstas p
 - 25/11: Codex integrado; AGENTS.md validado; teste de estorno alinhado à assinatura de seis argumentos; bancos e roles segregados; YAMLs sem fallback de senha; 25 testes aprovados; commit 8b8eb2d publicado.
 - 25/11: documentação de contexto publicada em 9d41a94. Incremento 1 aprovado com 50 testes. Escopo acadêmico obrigatório confirmado e registrada a meta revisada de recuperação.
 - 25/11: incremento 2 aprovado com 68 testes após a correção do tratamento de esgotamento. V6 e modo padrão do script de testes validados.
-- 25/11: incremento 3 aprovado com 87 testes. Núcleo de lançamentos validado, incluindo estorno e cancelamento. Próxima etapa: saldos iniciais, escrituração, demonstrações e fechamento automatizado.
+- 25/11: incremento 3 aprovado com 87 testes. Núcleo de lançamentos validado, incluindo estorno e cancelamento.
+- 25/11: incremento 4A concluído antecipadamente, com Livro Diário e consulta compartilhada de movimentos escriturados. Suíte de 92 testes aprovada.
 
 Fontes: planejamento de 22/11; relatórios do Codex e logs PostgreSQL/Maven/Git de 25/11 fornecidos pelo desenvolvedor. Este documento não substitui inspeção do código vigente.
