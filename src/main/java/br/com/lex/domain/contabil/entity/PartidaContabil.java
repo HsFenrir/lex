@@ -129,27 +129,7 @@ public class PartidaContabil {
             );
         }
 
-        if (valor == null || valor.signum() <= 0) {
-            throw new IllegalArgumentException(
-                    "O valor da partida deve ser positivo."
-            );
-        }
-
-        if ((long) valor.precision() - valor.scale() > PRECISAO_VALOR - ESCALA_VALOR) {
-            throw new IllegalArgumentException(
-                    "O valor da partida não pode possuir mais de 17 dígitos inteiros."
-            );
-        }
-
-        try {
-            valor = valor.setScale(ESCALA_VALOR, RoundingMode.UNNECESSARY);
-        } catch (ArithmeticException e) {
-            throw new IllegalArgumentException(
-                    "O valor da partida não pode possuir mais de duas casas decimais.",
-                    e
-            );
-        }
-
+        valor = normalizarValor(valor);
         if (historico != null && historico.isBlank()) {
             throw new IllegalArgumentException(
                     "O histórico da partida não pode estar vazio."
@@ -166,5 +146,28 @@ public class PartidaContabil {
         this.tipo = tipo;
         this.valor = valor;
         this.historico = historico == null ? null : historico.trim();
+    }
+
+    public static BigDecimal normalizarValor(BigDecimal valor) {
+        if (valor == null || valor.signum() <= 0) {
+            throw new IllegalArgumentException(
+                    "O valor da partida deve ser positivo."
+            );
+        }
+
+        if ((long) valor.precision() - valor.scale() > PRECISAO_VALOR - ESCALA_VALOR) {
+            throw new IllegalArgumentException(
+                    "O valor da partida não pode possuir mais de 17 dígitos inteiros."
+            );
+        }
+
+        try {
+            return valor.setScale(ESCALA_VALOR, RoundingMode.UNNECESSARY);
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException(
+                    "O valor da partida não pode possuir mais de duas casas decimais.",
+                    e
+            );
+        }
     }
 }

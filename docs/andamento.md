@@ -1,24 +1,25 @@
 # LEX — Andamento e passagem de contexto
 
-Atualização: 25/11/2026, após validação do incremento 1. Apresentação: 30/11/2026.
+Atualização: 25/11/2026, após validação do incremento 2. Apresentação: 30/11/2026.
 
 ## 1. Base verificada
 
 - Branch main sincronizada com origin/main e origin/HEAD segundo o log de push fornecido pelo desenvolvedor.
 - Checkpoint 8b8eb2d — test: validate accounting persistence and isolate test database; 14 arquivos, 789 inserções e 4 exclusões.
 - Commit anterior 08a584e — feat: adicionar entidades de lancamentos contabeis.
-- AGENTS.md e documentação inicial publicados em 9d41a94. O incremento 1 foi aprovado na suíte e aguarda commit.
+- AGENTS.md e documentação inicial publicados em 9d41a94. Incremento 1 publicado em 54a4b39, script de testes em 9fbd7d1 e escopo acadêmico confirmado em 1bf3fbc. O incremento 2 foi concluído e validado, com commit pendente.
 - Java 21.0.10, Maven Wrapper (Maven 3.10.1 relatado pelo Codex), Spring Boot 4.1.2, Hibernate ORM 7.4.13.Final, PostgreSQL 18.4, conforme relatórios/logs locais. Conferir pom.xml antes de mudanças.
-- No incremento 1, 33 fontes principais e sete fontes de teste compiladas. Flyway V1–V5 validado; schema public na versão 5; Hibernate ddl-auto: validate.
+- No incremento 2, 34 fontes principais e oito fontes de teste compiladas. Flyway V1–V6 validado; schema `public` na versão V6; Hibernate em `ddl-auto: validate`.
 
 ## 2. Evidência de regressão
 
-O desenvolvedor executou `.\mvnw.cmd -o clean test` em 25/11/2026, com término às 01:46:32 (UTC−03:00), duração de 32,542 segundos e `BUILD SUCCESS`. Os relatórios Surefire confirmam **50 testes, zero falhas, zero erros e zero ignorados**, incluindo os 25 casos do novo serviço e os 25 já aprovados no checkpoint.
+O desenvolvedor executou `.\scripts\test.ps1` em 25/11/2026, com término às 22:08:34 (UTC−03:00), duração de 33,591 segundos e `BUILD SUCCESS`. Os oito relatórios Surefire correspondem à implementação atual e confirmam **68 testes, zero falhas, zero erros e zero ignorados**, com 18 casos de confirmação e todos os 50 casos do incremento anterior.
 
-Perfil Spring `test`, PostgreSQL 18.4 em `jdbc:postgresql://127.0.0.1:5432/lex_test`, cinco migrations validadas e schema V5. O desenvolvedor validou a role `lex_test_runner` e a ausência de privilégio `CONNECT` em `lex_dev`.
+Perfil Spring `test`, PostgreSQL 18.4 em `jdbc:postgresql://127.0.0.1:5432/lex_test`. Foram validadas seis migrations, com o schema `public` na V6 e aplicação integral de V1 a V6 nos schemas descartáveis. A execução completa validou funcionalmente o script de testes, que exige a role `lex_test_runner` e a ausência de privilégio `CONNECT` em `lex_dev` antes de iniciar o Maven.
 
 | Classe | Testes aprovados |
 |---|---:|
+| ConfirmacaoLancamentoContabilServiceTest | 18 |
 | LancamentoContabilServiceTest | 25 |
 | PlanoContasServiceTest | 8 |
 | ContaContabilRepositoryTest | 4 |
@@ -26,11 +27,11 @@ Perfil Spring `test`, PostgreSQL 18.4 em `jdbc:postgresql://127.0.0.1:5432/lex_t
 | PartidaContabilRepositoryTest | 5 |
 | PlanoContasRepositoryTest | 1 |
 | LexApplicationTests | 1 |
-| Total | 50 |
+| Total | 68 |
 
-Os cenários negativos registraram SQLState 23503 nas chaves estrangeiras `fk_conta_pai` e `fk_conta_reduzida` e SQLState 23505 em `uq_lancamento_estorno_unico`. As classes correspondentes passaram. O novo serviço tem cobertura de autorização, isolamento entre duas empresas, precisão monetária, imutabilidade e rollback. Confirmação, estorno completo e concorrência da numeração seguem pendentes.
+Os cenários negativos incluem violações esperadas das chaves estrangeiras `fk_conta_pai` e `fk_conta_reduzida` e das regras de unicidade `uq_lancamento_estorno_unico` e `uq_lancamento_numero_empresa_exercicio`. Os testes respectivos passaram. A colisão de número foi provocada após a alocação para verificar que o lançamento permanece em rascunho e a atualização do contador é revertida.
 
-Houve falhas de renderização do PSReadLine durante a inserção do bloco de testes, conforme informado pelo desenvolvedor. O resultado final do Maven e os relatórios Surefire registraram execução bem-sucedida.
+Na validação do incremento 1, em 25/11 às 01:46:32 (UTC−03:00), `.\mvnw.cmd -o clean test` concluiu com 50 testes aprovados. As falhas de renderização do PSReadLine na inserção manual do bloco não afetaram esse resultado.
 
 ## 3. Implementação disponível e pontos de inspeção
 
@@ -40,8 +41,8 @@ Houve falhas de renderização do PSReadLine durante a inserção do bloco de te
 | Plano de contas | Modelo, contas, serviço e repositórios existentes; testes aprovados. |
 | Exercício/período | Entidades, repositórios e constraints existentes. |
 | Lançamento/partida | Entidades e repositórios, mapeamentos compostos e testes de persistência aprovados. |
-| Sequência | Tabela sequencia_lancamento existente na V5; serviço de alocação concorrente pendente. |
-| Serviços de lançamento | Incremento 1 concluído e validado: criação manual de rascunho, inclusão e remoção de partidas. |
+| Sequência | Alocação atômica validada, com contador independente por empresa e exercício. |
+| Serviços de lançamento | Incrementos 1 e 2 validados. Criação de rascunho, inclusão e remoção de partidas e confirmação contábil disponíveis. Estorno completo pendente. |
 | API/frontend | Estado completo a inspecionar; integração essencial pendente. |
 
 ### Arquivos e contratos do incremento 1
@@ -58,6 +59,15 @@ Houve falhas de renderização do PSReadLine durante a inserção do bloco de te
 | `void removerPartida(UUID empresaId, UUID usuarioId, UUID lancamentoId, UUID partidaId)` | Valida autorização, bloqueia o rascunho no escopo da empresa e exclui somente a partida vinculada ao lançamento. |
 
 O chamador fornece a identidade do usuário autenticado. As mutações usam `buscarParaAlteracao(id, empresaId)` com `PESSIMISTIC_WRITE`. O rascunho pode ficar vazio ou desequilibrado. Após o fechamento do exercício ou período, o serviço ainda permite editar as partidas de um lançamento que permanece em rascunho, em conformidade com a regra de mutação da V5.
+
+### Contratos do incremento 2
+
+- `LancamentoContabil confirmarLancamento(UUID empresaId, UUID usuarioId, UUID lancamentoId)` confirma um rascunho autorizado e registra número, responsável e horário. Exige usuário ativo, empresa ativa e não arquivada, exercício e período abertos, data dentro do período e ao menos duas partidas válidas e equilibradas em contas analíticas ativas do plano. A confirmação genérica rejeita rascunhos de estorno.
+- `Optional<Long> alocarNumero(UUID empresaId, UUID exercicioId)`, em `SequenciaLancamentoRepository`, exige transação ativa. Usa `INSERT … ON CONFLICT … DO UPDATE … RETURNING` para iniciar em 1 ou incrementar atomicamente `ultimo_numero`. Ao atingir `Long.MAX_VALUE`, o SQL retorna zero linhas e o repositório devolve `Optional.empty()`. O serviço lança `IllegalStateException` antes de alterar o lançamento. Erros de persistência são propagados.
+
+Os bloqueios são adquiridos na ordem **lançamento → período → exercício → empresa → usuário → contas ordenadas por ID → sequência**. O bloqueio pessimista do lançamento serializa confirmações e mutações de partidas do mesmo rascunho. Os bloqueios compartilhados protegem os estados consultados até o fim da transação. A linha da sequência serializa alocações para a mesma empresa e exercício. O contador e a confirmação são gravados na mesma transação, com `flush` antes do retorno. Os testes em transações independentes comprovaram uma única confirmação para o mesmo lançamento, números distintos para lançamentos do mesmo exercício e rollback do contador em caso de rejeição pelo banco.
+
+A V6 amplia apenas os acumuladores de débito e crédito do trigger para `NUMERIC` sem precisão fixa. As partidas permanecem em `NUMERIC(19,2)`. Um teste confirma um lançamento equilibrado cujos totais agregados superam o limite de uma partida individual.
 
 ## 4. Ambiente de execução
 
@@ -81,20 +91,18 @@ O padrão é `.\mvnw.cmd -o clean test`. Use `-Online` quando for necessário ob
 
 O script verifica variáveis e arquivos locais que podem sobrescrever a execução, solicita a senha de `lex_test_runner` no terminal e exige a resposta `lex_test|lex_test_runner|5432|f` do `psql` antes de iniciar o Maven. `PGPASSWORD` é removida logo após a consulta e `TEST_DB_*` é limpo ao final, inclusive em caso de falha. Consulte `$LASTEXITCODE` para o resultado da execução e confira o destino nos logs do Spring e do Flyway.
 
-A validação funcional do script fica para a próxima rodada de testes. Para JUnit no IntelliJ, use `TEST_DB_*` nas configurações locais All in lex e LexApplicationTests. A atualização dessas configurações ainda não foi confirmada. Uma IDE já aberta não herda variáveis de um novo terminal.
+O modo padrão do script foi validado funcionalmente na suíte de 68 testes. Para JUnit no IntelliJ, use `TEST_DB_*` nas configurações locais All in lex e LexApplicationTests. A atualização dessas configurações ainda não foi confirmada. Uma IDE já aberta não herda variáveis de um novo terminal.
 
-## 5. Próximo incremento: confirmação e numeração atômica
+## 5. Próximo incremento: estorno completo
 
-1. Após autorização, definir e implementar a confirmação transacional. Validar titularidade, empresa ativa, rascunho, exercício e período abertos, data, contas, mínimo de partidas e equilíbrio.
-2. Alocar o número atomicamente por empresa e exercício na mesma transação. Revisar ordem dos locks e flush com a V5 e testar concorrência, isolamento e rollback.
-3. Avaliar a precisão dos totais de débito e crédito. As variáveis da V5 usam `NUMERIC(19,2)`, e a soma pode exceder esse limite com partidas individualmente válidas.
-4. Tratar o estorno completo em incremento próprio, com inversão de partidas, reserva do original e atualização atômica do original após confirmar o estorno.
+Após autorização, implementar a criação do estorno com inversão de partidas e reserva do lançamento original. Confirmar e numerar o estorno e atualizar o original para `ESTORNADO` na mesma transação, respeitando a ordem de bloqueios e os triggers. Validar concorrência, isolamento e rollback no fluxo completo.
 
 ## 6. Backlog e riscos
 
-- P0: confirmação, numeração atômica e estorno completo. Na sequência, saldos iniciais, livros e demonstrações, fechamento, estoque PEPS, ativos e depreciação, conforme a meta de recuperação em [decisoes-e-cronograma.md](decisoes-e-cronograma.md).
+- P0: estorno completo. Na sequência, saldos iniciais, livros e demonstrações, fechamento, estoque PEPS, ativos e depreciação, conforme a meta de recuperação em [decisoes-e-cronograma.md](decisoes-e-cronograma.md).
 - P0: entregar link e manual. O enunciado confirma Diário, Razão, Balance (Balancete no planejamento), BP, DRE e os módulos de estoque, ativos e depreciação. Ver [requisitos-academicos.md](requisitos-academicos.md) para orientações de aula, PDFs e a ressalva do modelo de DRE.
 - P1: integrar autenticação e utilização efetiva da auditoria, ampliar a cobertura de isolamento para os próximos fluxos e avaliar proteção adicional contra destino errado antes do contexto Spring.
+- P1: um contador legado defasado pode colidir com número já utilizado. A restrição de unicidade rejeita a confirmação e a transação reverte a alocação. A reconciliação de dados legados permanece pendente caso a divergência seja encontrada.
 - P1 segurança: fallbacks antigos de credenciais foram removidos, mas valores anteriores podem persistir no histórico Git. Classificar e rotacionar se reais; remoção do arquivo atual não elimina exposição histórica. Não reescrever histórico sem aprovação.
 - P2: avisos de repositórios Maven (timeouts/401), agente dinâmico Mockito, templates Thymeleaf ausentes; não bloqueiam checkpoint. Rever quando pertinente, sem ampliar escopo.
 
@@ -103,6 +111,6 @@ A validação funcional do script fica para a próxima rodada de testes. Para JU
 - 22/11: planejamento original; 14 testes aprovados e 8 interfaces de repositório relatadas.
 - 25/11: Codex integrado; AGENTS.md validado; teste de estorno alinhado à assinatura de seis argumentos; bancos e roles segregados; YAMLs sem fallback de senha; 25 testes aprovados; commit 8b8eb2d publicado.
 - 25/11: documentação de contexto publicada em 9d41a94. Incremento 1 aprovado com 50 testes. Escopo acadêmico obrigatório confirmado e registrada a meta revisada de recuperação.
-- Próximo: registrar o incremento validado e a atualização documental em commits separados, após autorização. Iniciar confirmação e numeração em etapa própria.
+- 25/11: incremento 2 aprovado com 68 testes após a correção do tratamento de esgotamento. V6 e modo padrão do script de testes validados. Próximo incremento: estorno completo.
 
 Fontes: planejamento de 22/11; relatórios do Codex e logs PostgreSQL/Maven/Git de 25/11 fornecidos pelo desenvolvedor. Este documento não substitui inspeção do código vigente.
