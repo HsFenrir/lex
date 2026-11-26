@@ -1,24 +1,25 @@
 # LEX — Andamento e passagem de contexto
 
-Atualização em 25/11/2026, após a conclusão antecipada do incremento 4B. Apresentação em 30/11/2026.
+Atualização em 26/11/2026, após a conclusão do incremento 4C. Apresentação em 30/11/2026.
 
 ## 1. Base verificada
 
 - Branch main sincronizada com origin/main e origin/HEAD segundo o log de push fornecido pelo desenvolvedor.
-- Checkpoint `ad391a2`, com o incremento 4A publicado. O incremento 4B está apto para commit.
+- Checkpoint `be1ad09`, com o incremento 4B publicado. O incremento 4C está apto para commit.
 - As metas de 25/11 foram integralmente concluídas. Os serviços de Livro Diário e Livro Razão foram antecipados em relação às atividades previstas para 26/11.
 - AGENTS.md e documentação inicial publicados em 9d41a94. Incremento 1 publicado em 54a4b39, script de testes em 9fbd7d1, escopo acadêmico confirmado em 1bf3fbc e incremento 2 publicado em 47cf2a8.
 - Java 21.0.10, Maven Wrapper (Maven 3.10.1 relatado pelo Codex), Spring Boot 4.1.2, Hibernate ORM 7.4.13.Final, PostgreSQL 18.4, conforme relatórios/logs locais. Conferir pom.xml antes de mudanças.
-- No incremento 4B, foram compiladas 40 fontes principais e 11 fontes de teste. Flyway V1–V6 validado, schema `public` na V6 e Hibernate em `ddl-auto: validate`.
+- No incremento 4C, foram compiladas 42 fontes principais e 12 fontes de teste. Flyway V1–V6 validado, schema `public` na V6 e Hibernate em `ddl-auto: validate`.
 
 ## 2. Evidência de regressão
 
-O desenvolvedor executou `.\scripts\test.ps1` em 25/11/2026, com término às 23:39:58 (UTC−03:00), duração de 46,039 segundos e `BUILD SUCCESS`. Os 11 relatórios Surefire confirmam **97 testes, zero falhas, zero erros e zero ignorados**, incluindo os cinco casos do Livro Razão e os 92 testes anteriores. As classes dos oito arquivos do incremento foram compiladas após a última alteração nas fontes e antes da geração dos relatórios. Os métodos de teste do Diário e do Razão coincidem com os casos registrados no Surefire.
+O desenvolvedor executou `.\scripts\test.ps1` em 26/11/2026, com término às 19:45:05 (UTC−03:00), duração de 51,818 segundos e `BUILD SUCCESS`. Os 12 relatórios Surefire confirmam **105 testes, zero falhas, zero erros e zero ignorados**, incluindo oito casos de abertura e os 97 testes anteriores. As classes dos seis arquivos do incremento foram compiladas após as últimas alterações nas fontes e antes da geração dos relatórios. Os oito métodos de `AberturaContabilServiceTest` coincidem com os casos registrados no Surefire.
 
 Perfil Spring `test`, PostgreSQL 18.4 em `jdbc:postgresql://127.0.0.1:5432/lex_test`. Foram validadas seis migrations, com o schema `public` na V6 e aplicação integral de V1 a V6 em nove schemas descartáveis: três para confirmação e seis para estorno. Os testes aguardam o encerramento das threads com timeout e programam a remoção de cada schema gerado em `finally`. O script exige a role `lex_test_runner` e a ausência de privilégio `CONNECT` em `lex_dev` antes de iniciar o Maven.
 
 | Classe | Testes aprovados |
 |---|---:|
+| AberturaContabilServiceTest | 8 |
 | EstornoLancamentoContabilServiceTest | 19 |
 | ConfirmacaoLancamentoContabilServiceTest | 18 |
 | LancamentoContabilServiceTest | 25 |
@@ -30,7 +31,7 @@ Perfil Spring `test`, PostgreSQL 18.4 em `jdbc:postgresql://127.0.0.1:5432/lex_t
 | PartidaContabilRepositoryTest | 5 |
 | PlanoContasRepositoryTest | 1 |
 | LexApplicationTests | 1 |
-| Total | 97 |
+| Total | 105 |
 
 Os cenários negativos incluem violações esperadas das chaves estrangeiras `fk_conta_pai` e `fk_conta_reduzida` e das regras de unicidade `uq_lancamento_estorno_unico` e `uq_lancamento_numero_empresa_exercicio`. Os testes respectivos passaram. A colisão de número foi provocada após a alocação para verificar que o lançamento permanece em rascunho e a atualização do contador é revertida.
 
@@ -50,6 +51,7 @@ Na validação do incremento 1, em 25/11 às 01:46:32 (UTC−03:00), `.\mvnw.cmd
 | Serviços de lançamento | Incrementos 1 a 3 validados. Criação de rascunho, inclusão e remoção de partidas manuais, confirmação com numeração atômica e estorno completo disponíveis. |
 | Livro Diário | Incremento 4A validado. Serviço de emissão e consulta compartilhada de partidas escrituradas disponíveis. |
 | Livro Razão | Incremento 4B validado. Emissão por conta analítica e apuração compartilhada de saldos disponíveis. |
+| Saldos iniciais | Incremento 4C validado. Abertura manual por lançamento escriturado no primeiro exercício da empresa. |
 | API/frontend | Estado completo a inspecionar; integração essencial pendente. |
 
 ### Arquivos e contratos do incremento 1
@@ -112,6 +114,18 @@ A sobrecarga de `buscarMovimentosEscriturados` filtra por conta diretamente no b
 
 O Razão segue a estratégia de leitura `REPEATABLE_READ` do Diário. Em uma transação externa com isolamento inferior, prevalece o isolamento externo e as validações e a consulta podem observar snapshots diferentes. Saldo anterior, movimentos e saldo final continuam derivados das linhas da mesma instrução SQL.
 
+### Contrato do incremento 4C
+
+`LancamentoContabilService.registrarSaldosIniciais(AberturaContabil abertura)` recebe um DTO imutável com empresa, usuário autenticado, exercício, período, data, histórico e uma lista copiada de `SaldoPorConta`, com conta, débito ou crédito e valor. Retorna `AberturaConfirmada`, com identificador, empresa, exercício, período, número, data, origem e responsável e instante da confirmação.
+
+A operação cria o cabeçalho de origem `ABERTURA`, inclui as partidas e confirma na mesma transação. Reutiliza a autorização, a validação de calendário, contas analíticas e ativas do plano, valores e equilíbrio do núcleo. Exige ao menos duas contas distintas com valores positivos e aceita saldos de natureza contrária à cadastrada. A empresa sem saldos anteriores pode iniciar a escrituração sem abertura. Na migração, a abertura manual é permitida apenas no primeiro exercício cadastrado, em data válida de período aberto, inclusive durante o ano e com contas de resultado, desde que ainda não haja movimentos escriturados. Rascunhos podem existir.
+
+A confirmação de uma abertura deve obter o número 1 na sequência atômica por empresa e exercício. A confirmação manual usa a mesma sequência. Se ela obtiver o primeiro número antes da abertura, a abertura é rejeitada e revertida. Se a abertura obtiver o número 1, a confirmação manual pode prosseguir com a numeração seguinte. O teste concorrente cobre duas aberturas em transações independentes. A disputa entre abertura e confirmação manual foi verificada pelo uso da mesma sequência no código, sem teste simultâneo específico desse par. O teste de falha na confirmação comprova rollback de cabeçalho, partidas e sequência. A regra é aplicada pelo serviço com apoio da sequência e da unicidade da numeração na V6. Escritas diretas que contornem o serviço e a sequência ficam fora dessa proteção.
+
+O estorno preserva a abertura no histórico e a abertura original, mesmo estornada, impede outra abertura manual. O Diário mostra os lançamentos nas respectivas datas contábeis, e o Razão incorpora as partidas aos movimentos e saldos de acordo com o recorte. Ambos os efeitos da abertura foram verificados na suíte.
+
+A integração futura com `auditoria_evento` deve registrar empresa, usuário, operação e referência do lançamento, com os dados aplicáveis na mesma transação. Os valores de abertura de estoque e ativos deverão ser conciliados com os cadastros operacionais para evitar contabilização duplicada quando esses módulos entrarem em uso.
+
 ## 4. Ambiente de execução
 
 | Perfil | JDBC | Role | Variáveis |
@@ -134,17 +148,21 @@ O padrão é `.\mvnw.cmd -o clean test`. Use `-Online` quando for necessário ob
 
 O script verifica variáveis e arquivos locais que podem sobrescrever a execução, solicita a senha de `lex_test_runner` no terminal e exige a resposta `lex_test|lex_test_runner|5432|f` do `psql` antes de iniciar o Maven. `PGPASSWORD` é removida logo após a consulta e `TEST_DB_*` é limpo ao final, inclusive em caso de falha. Consulte `$LASTEXITCODE` para o resultado da execução e confira o destino nos logs do Spring e do Flyway.
 
-O modo padrão do script foi validado nas suítes de 68, 87, 92 e 97 testes. Para JUnit no IntelliJ, use `TEST_DB_*` nas configurações locais All in lex e LexApplicationTests. A atualização dessas configurações ainda não foi confirmada. Uma IDE já aberta não herda variáveis de um novo terminal.
+O modo padrão do script foi validado nas suítes de 68, 87, 92, 97 e 105 testes. Para JUnit no IntelliJ, use `TEST_DB_*` nas configurações locais All in lex e LexApplicationTests. A atualização dessas configurações ainda não foi confirmada. Uma IDE já aberta não herda variáveis de um novo terminal.
 
-## 5. Próxima etapa — Entrada de saldos iniciais e continuidade patrimonial
+## 5. Próxima etapa — Balancete de Verificação
 
-A próxima etapa é implementar a entrada de saldos iniciais e definir a continuidade patrimonial entre exercícios. A apuração atual se limita aos movimentos do exercício selecionado. A definição do transporte deve evitar contabilizar duas vezes o mesmo saldo patrimonial quando houver lançamentos de abertura.
+A próxima etapa é implementar o Balancete de Verificação a partir dos movimentos escriturados e da apuração compartilhada. O transporte patrimonial automatizado permanece pendente. A apuração atual se limita ao exercício selecionado.
 
 **Regra da escrituração efetiva.** Lançamentos `CONFIRMADOS`, inclusive os estornos confirmados, e lançamentos originais `ESTORNADOS` integram a escrituração. Cada um produz efeitos na sua própria data contábil, respeitado o corte do relatório. Lançamentos em `RASCUNHO` ficam fora dos saldos. O original e seu estorno podem produzir efeitos em períodos diferentes.
 
 ## 6. Backlog e riscos
 
-- P0: saldos iniciais, escrituração, demonstrações e fechamento automatizado. Na sequência, estoque PEPS, ativos e depreciação, conforme a meta de recuperação em [decisoes-e-cronograma.md](decisoes-e-cronograma.md).
+- P0: Balancete, demonstrações, continuidade patrimonial e fechamento automatizado. Na sequência, estoque PEPS, ativos e depreciação, conforme a meta de recuperação em [decisoes-e-cronograma.md](decisoes-e-cronograma.md).
+- Lançamentos com data anterior à abertura de migração podem duplicar movimentos incorporados aos saldos iniciais. Falta definir como tratar lançamentos retroativos nesse cenário.
+- A correção após estorno da abertura deve permanecer possível por meio de lançamentos contábeis apropriados e rastreáveis.
+- A DRE deve tratar explicitamente os saldos de resultado importados, distinguindo os saldos acumulados das movimentações efetivamente detalhadas por período.
+- A continuidade patrimonial deve distinguir a abertura manual de migração da abertura automatizada de exercícios subsequentes, evitando duplicidade entre o transporte e os lançamentos de abertura.
 - P0: entregar link e manual. O enunciado confirma Diário, Razão, Balance (Balancete no planejamento), BP, DRE e os módulos de estoque, ativos e depreciação. Ver [requisitos-academicos.md](requisitos-academicos.md) para orientações de aula, PDFs e a ressalva do modelo de DRE.
 - A interface, a geração de PDFs e a integração da auditoria aos fluxos seguem pendentes. A exportação em PDF deverá contemplar o Livro Razão integral, além da emissão individual por conta disponível no serviço atual.
 - O projeto adotará um modelo próprio de DRE, conforme a decisão já registrada. A implementação pode avançar enquanto permanece a ressalva acadêmica sobre a disponibilidade do modelo do professor e eventuais diferenças de formato. [Requisitos acadêmicos](requisitos-academicos.md#4-enunciado-orientações-de-aula-e-decisões-complementares).
@@ -162,5 +180,6 @@ A próxima etapa é implementar a entrada de saldos iniciais e definir a continu
 - 25/11: incremento 3 aprovado com 87 testes. Núcleo de lançamentos validado, incluindo estorno e cancelamento.
 - 25/11: incremento 4A concluído antecipadamente, com Livro Diário e consulta compartilhada de movimentos escriturados. Suíte de 92 testes aprovada.
 - 25/11: incremento 4B concluído antecipadamente, com Livro Razão por conta e apuração compartilhada de saldos. Suíte de 97 testes aprovada.
+- 26/11: incremento 4C concluído, com abertura manual de saldos iniciais por lançamento contábil. Suíte de 105 testes aprovada.
 
 Fontes: planejamento de 22/11; relatórios do Codex e logs PostgreSQL/Maven/Git de 25/11 fornecidos pelo desenvolvedor. Este documento não substitui inspeção do código vigente.

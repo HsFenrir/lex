@@ -9,6 +9,8 @@ import java.util.UUID;
 public interface ExercicioContabilRepository
         extends JpaRepository<ExercicioContabil, UUID> {
 
+    boolean existsByEmpresaIdAndAnoLessThan(UUID empresaId, Short ano);
+
     Optional<ExercicioContabil> findByIdAndEmpresaId(
             UUID id,
             UUID empresaId

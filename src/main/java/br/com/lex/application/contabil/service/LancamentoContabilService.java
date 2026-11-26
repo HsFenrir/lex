@@ -1,5 +1,7 @@
 package br.com.lex.application.contabil.service;
 
+import br.com.lex.application.contabil.dto.AberturaConfirmada;
+import br.com.lex.application.contabil.dto.AberturaContabil;
 import br.com.lex.domain.contabil.entity.ContaContabil;
 import br.com.lex.domain.contabil.entity.Empresa;
 import br.com.lex.domain.contabil.entity.ExercicioContabil;
@@ -41,6 +43,9 @@ import java.util.stream.Collectors;
 /** O usuarioId deve identificar o usuário autenticado pelo chamador. */
 @Service
 public class LancamentoContabilService {
+
+    private static final Set<StatusLancamento> STATUS_ESCRITURADOS =
+            Set.of(StatusLancamento.CONFIRMADO, StatusLancamento.ESTORNADO);
 
     private final UsuarioRepository usuarioRepository;
     private final EmpresaRepository empresaRepository;
@@ -98,15 +103,55 @@ public class LancamentoContabilService {
     }
 
     @Transactional
+    public AberturaConfirmada registrarSaldosIniciais(AberturaContabil abertura) {
+        if (abertura == null) {
+            throw new IllegalArgumentException("A solicitação de abertura deve ser informada.");
+        }
+        Usuario usuario = buscarUsuarioAtivo(abertura.usuarioId());
+        Empresa empresa = buscarEmpresaAutorizada(abertura.empresaId(), abertura.usuarioId());
+        ExercicioContabil exercicio = buscarExercicio(empresa.getId(), abertura.exercicioId());
+        PeriodoContabil periodo = buscarPeriodo(empresa.getId(), exercicio.getId(), abertura.periodoId());
+        validarCalendario(exercicio, periodo, abertura.data());
+        if (abertura.saldos().size() < 2) {
+            throw new IllegalArgumentException("Informe pelo menos duas contas com saldo.");
+        }
+
+        PlanoContas plano = planoContasRepository.findByEmpresaId(empresa.getId())
+                .orElseThrow(() -> new IllegalStateException("A empresa não possui plano de contas."));
+        LancamentoContabil lancamento = new LancamentoContabil(
+                empresa, exercicio, periodo, plano, usuario, abertura.data(), abertura.historico(), OrigemLancamento.ABERTURA
+        );
+        lancamentoRepository.save(lancamento);
+        Set<UUID> contasInformadas = new HashSet<>();
+        for (AberturaContabil.SaldoPorConta saldo : abertura.saldos()) {
+            if (saldo.contaId() == null || !contasInformadas.add(saldo.contaId())) {
+                throw new IllegalArgumentException("Informe cada conta uma única vez na abertura.");
+            }
+            ContaContabil conta = buscarContaDoLancamento(lancamento, saldo.contaId());
+            partidaRepository.save(new PartidaContabil(lancamento, conta, saldo.tipo(), saldo.valor(), null));
+        }
+        partidaRepository.flush();
+        validarConfirmacao(lancamento, empresa, usuario);
+        registrarConfirmacao(lancamento, usuario);
+        return new AberturaConfirmada(lancamento.getId(), empresa.getId(), exercicio.getId(), periodo.getId(),
+                lancamento.getNumero(), lancamento.getData(), lancamento.getOrigem(),
+                lancamento.getConfirmadoPor().getId(), lancamento.getConfirmadoEm());
+    }
+
+    @Transactional
     public PartidaContabil adicionarPartida(
             UUID empresaId, UUID usuarioId, UUID lancamentoId, UUID contaId,
             TipoPartida tipo, BigDecimal valor, String historico
     ) {
         LancamentoContabil lancamento = bloquearRascunhoAutorizado(empresaId, usuarioId, lancamentoId);
-        ContaContabil conta = contaRepository.findByIdAndPlanoContasId(contaId, lancamento.getPlanoContasId())
-                .orElseThrow(() -> new IllegalArgumentException("Conta não encontrada no plano do lançamento."));
+        ContaContabil conta = buscarContaDoLancamento(lancamento, contaId);
 
         return partidaRepository.save(new PartidaContabil(lancamento, conta, tipo, valor, historico));
+    }
+
+    private ContaContabil buscarContaDoLancamento(LancamentoContabil lancamento, UUID contaId) {
+        return contaRepository.findByIdAndPlanoContasId(contaId, lancamento.getPlanoContasId())
+                .orElseThrow(() -> new IllegalArgumentException("Conta não encontrada no plano do lançamento."));
     }
 
     @Transactional
@@ -262,6 +307,9 @@ public class LancamentoContabilService {
         ExercicioContabil exercicio = buscarExercicio(empresa.getId(), lancamento.getExercicioId());
         PeriodoContabil periodo = buscarPeriodo(empresa.getId(), exercicio.getId(), lancamento.getPeriodoId());
         bloquearEValidarDestino(exercicio, periodo, empresa, usuario, lancamento.getData());
+        if (lancamento.getOrigem() == OrigemLancamento.ABERTURA) {
+            validarPoliticaAbertura(empresa.getId(), exercicio);
+        }
         List<DadosPartida> partidas = buscarPartidas(lancamento);
         validarPartidasParaConfirmacao(lancamento, partidas);
         return partidas;
@@ -290,8 +338,26 @@ public class LancamentoContabilService {
     private void registrarConfirmacao(LancamentoContabil lancamento, Usuario usuario) {
         long numero = sequenciaRepository.alocarNumero(lancamento.getEmpresaId(), lancamento.getExercicioId())
                 .orElseThrow(() -> new IllegalStateException("A numeração contábil do exercício atingiu o limite."));
+        // A mesma sequência de todas as confirmações decide qual operação escritura primeiro.
+        if (lancamento.getOrigem() == OrigemLancamento.ABERTURA && numero != 1L) {
+            throw new IllegalStateException("A abertura deve ser o primeiro lançamento escriturado no exercício.");
+        }
         lancamento.confirmar(numero, usuario, OffsetDateTime.now());
         lancamentoRepository.flush();
+    }
+
+    private void validarPoliticaAbertura(UUID empresaId, ExercicioContabil exercicio) {
+        if (exercicioRepository.existsByEmpresaIdAndAnoLessThan(empresaId, exercicio.getAno())) {
+            throw new IllegalStateException("A abertura manual é permitida apenas no primeiro exercício da empresa.");
+        }
+        if (lancamentoRepository.existsByEmpresaIdAndExercicioIdAndStatusIn(
+                empresaId, exercicio.getId(), STATUS_ESCRITURADOS)) {
+            if (lancamentoRepository.existsByEmpresaIdAndExercicioIdAndOrigemAndStatusIn(
+                    empresaId, exercicio.getId(), OrigemLancamento.ABERTURA, STATUS_ESCRITURADOS)) {
+                throw new IllegalStateException("O exercício já possui abertura escriturada, ainda que estornada.");
+            }
+            throw new IllegalStateException("O exercício já possui movimentos escriturados.");
+        }
     }
 
     private void validarPartidasParaConfirmacao(LancamentoContabil lancamento, List<DadosPartida> partidas) {

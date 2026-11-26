@@ -2,6 +2,7 @@
 package br.com.lex.domain.contabil.repository;
 
 import br.com.lex.domain.contabil.entity.LancamentoContabil;
+import br.com.lex.domain.contabil.enums.OrigemLancamento;
 import br.com.lex.domain.contabil.enums.StatusLancamento;
 import org.springframework.data.jpa.repository.JpaRepository;
 import jakarta.persistence.LockModeType;
@@ -9,6 +10,7 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -45,6 +47,14 @@ public interface LancamentoContabilRepository
             UUID empresaId,
             UUID exercicioId,
             Long numero
+    );
+
+    boolean existsByEmpresaIdAndExercicioIdAndOrigemAndStatusIn(
+            UUID empresaId, UUID exercicioId, OrigemLancamento origem, Collection<StatusLancamento> status
+    );
+
+    boolean existsByEmpresaIdAndExercicioIdAndStatusIn(
+            UUID empresaId, UUID exercicioId, Collection<StatusLancamento> status
     );
 
     Optional<LancamentoContabil>
