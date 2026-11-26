@@ -3,13 +3,9 @@ package br.com.lex.application.contabil.service;
 import br.com.lex.application.contabil.dto.LivroDiario;
 import br.com.lex.domain.contabil.entity.Empresa;
 import br.com.lex.domain.contabil.entity.ExercicioContabil;
-import br.com.lex.domain.contabil.entity.Usuario;
 import br.com.lex.domain.contabil.enums.TipoPartida;
-import br.com.lex.domain.contabil.repository.EmpresaRepository;
-import br.com.lex.domain.contabil.repository.ExercicioContabilRepository;
 import br.com.lex.domain.contabil.repository.PartidaContabilRepository;
 import br.com.lex.domain.contabil.repository.PartidaContabilRepository.MovimentoEscriturado;
-import br.com.lex.domain.contabil.repository.UsuarioRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
@@ -31,34 +27,14 @@ public class LivroDiarioService {
 
     private static final BigDecimal ZERO_MONETARIO = new BigDecimal("0.00");
 
-    private final UsuarioRepository usuarios;
-    private final EmpresaRepository empresas;
-    private final ExercicioContabilRepository exercicios;
+    private final ConsultaContabil consulta;
     private final PartidaContabilRepository partidas;
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public LivroDiario emitir(UUID empresaId, UUID usuarioId, UUID exercicioId, LocalDate inicio, LocalDate fim) {
-        if (empresaId == null || usuarioId == null || exercicioId == null || inicio == null || fim == null) {
-            throw new IllegalArgumentException("Empresa, usuário, exercício e datas devem ser informados.");
-        }
-
-        Usuario usuario = usuarios.findById(usuarioId)
-                .orElseThrow(() -> new IllegalArgumentException("Usuário não encontrado."));
-        if (!usuario.isAtivo()) {
-            throw new IllegalStateException("O usuário deve estar ativo.");
-        }
-
-        Empresa empresa = empresas.findByIdAndUsuarioId(empresaId, usuarioId)
-                .orElseThrow(() -> new IllegalArgumentException("Empresa não encontrada ou não pertence ao usuário."));
-        if (!empresa.isAtiva() || empresa.getArquivadaEm() != null) {
-            throw new IllegalStateException("A empresa deve estar ativa e não arquivada.");
-        }
-
-        ExercicioContabil exercicio = exercicios.findByIdAndEmpresaId(exercicioId, empresaId)
-                .orElseThrow(() -> new IllegalArgumentException("Exercício não encontrado para a empresa."));
-        if (inicio.isAfter(fim) || inicio.isBefore(exercicio.getDataInicio()) || fim.isAfter(exercicio.getDataFim())) {
-            throw new IllegalArgumentException("O intervalo deve estar contido nas datas do exercício.");
-        }
+        ConsultaContabil.Contexto contexto = consulta.validar(empresaId, usuarioId, exercicioId, inicio, fim);
+        Empresa empresa = contexto.empresa();
+        ExercicioContabil exercicio = contexto.exercicio();
 
         List<LivroDiario.Lancamento> lancamentos = partidas
                 .buscarMovimentosEscriturados(empresaId, exercicioId, inicio, fim).stream()

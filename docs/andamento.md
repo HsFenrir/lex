@@ -1,18 +1,19 @@
 # LEX — Andamento e passagem de contexto
 
-Atualização em 25/11/2026, após a conclusão antecipada do incremento 4A. Apresentação em 30/11/2026.
+Atualização em 25/11/2026, após a conclusão antecipada do incremento 4B. Apresentação em 30/11/2026.
 
 ## 1. Base verificada
 
 - Branch main sincronizada com origin/main e origin/HEAD segundo o log de push fornecido pelo desenvolvedor.
-- Checkpoint `edf11d1`, com o incremento 3 de estorno e cancelamento. O incremento 4A foi concluído em 25/11 como antecipação parcial das atividades previstas para 26/11 e está apto para commit.
+- Checkpoint `ad391a2`, com o incremento 4A publicado. O incremento 4B está apto para commit.
+- As metas de 25/11 foram integralmente concluídas. Os serviços de Livro Diário e Livro Razão foram antecipados em relação às atividades previstas para 26/11.
 - AGENTS.md e documentação inicial publicados em 9d41a94. Incremento 1 publicado em 54a4b39, script de testes em 9fbd7d1, escopo acadêmico confirmado em 1bf3fbc e incremento 2 publicado em 47cf2a8.
 - Java 21.0.10, Maven Wrapper (Maven 3.10.1 relatado pelo Codex), Spring Boot 4.1.2, Hibernate ORM 7.4.13.Final, PostgreSQL 18.4, conforme relatórios/logs locais. Conferir pom.xml antes de mudanças.
-- No incremento 4A, foram compiladas 36 fontes principais e dez fontes de teste. Flyway V1–V6 validado, schema `public` na V6 e Hibernate em `ddl-auto: validate`.
+- No incremento 4B, foram compiladas 40 fontes principais e 11 fontes de teste. Flyway V1–V6 validado, schema `public` na V6 e Hibernate em `ddl-auto: validate`.
 
 ## 2. Evidência de regressão
 
-O desenvolvedor executou `.\scripts\test.ps1` em 25/11/2026, com término às 23:24:49 (UTC−03:00), duração de 48,323 segundos e `BUILD SUCCESS`. Os dez relatórios Surefire confirmam **92 testes, zero falhas, zero erros e zero ignorados**, incluindo os cinco casos do Livro Diário e os 87 testes anteriores. As classes dos quatro arquivos do incremento foram compiladas após a última alteração nas fontes e antes da geração dos relatórios. Os cinco métodos de teste do Diário coincidem com os casos registrados no Surefire.
+O desenvolvedor executou `.\scripts\test.ps1` em 25/11/2026, com término às 23:39:58 (UTC−03:00), duração de 46,039 segundos e `BUILD SUCCESS`. Os 11 relatórios Surefire confirmam **97 testes, zero falhas, zero erros e zero ignorados**, incluindo os cinco casos do Livro Razão e os 92 testes anteriores. As classes dos oito arquivos do incremento foram compiladas após a última alteração nas fontes e antes da geração dos relatórios. Os métodos de teste do Diário e do Razão coincidem com os casos registrados no Surefire.
 
 Perfil Spring `test`, PostgreSQL 18.4 em `jdbc:postgresql://127.0.0.1:5432/lex_test`. Foram validadas seis migrations, com o schema `public` na V6 e aplicação integral de V1 a V6 em nove schemas descartáveis: três para confirmação e seis para estorno. Os testes aguardam o encerramento das threads com timeout e programam a remoção de cada schema gerado em `finally`. O script exige a role `lex_test_runner` e a ausência de privilégio `CONNECT` em `lex_dev` antes de iniciar o Maven.
 
@@ -22,13 +23,14 @@ Perfil Spring `test`, PostgreSQL 18.4 em `jdbc:postgresql://127.0.0.1:5432/lex_t
 | ConfirmacaoLancamentoContabilServiceTest | 18 |
 | LancamentoContabilServiceTest | 25 |
 | LivroDiarioServiceTest | 5 |
+| LivroRazaoServiceTest | 5 |
 | PlanoContasServiceTest | 8 |
 | ContaContabilRepositoryTest | 4 |
 | LancamentoContabilRepositoryTest | 6 |
 | PartidaContabilRepositoryTest | 5 |
 | PlanoContasRepositoryTest | 1 |
 | LexApplicationTests | 1 |
-| Total | 92 |
+| Total | 97 |
 
 Os cenários negativos incluem violações esperadas das chaves estrangeiras `fk_conta_pai` e `fk_conta_reduzida` e das regras de unicidade `uq_lancamento_estorno_unico` e `uq_lancamento_numero_empresa_exercicio`. Os testes respectivos passaram. A colisão de número foi provocada após a alocação para verificar que o lançamento permanece em rascunho e a atualização do contador é revertida.
 
@@ -47,6 +49,7 @@ Na validação do incremento 1, em 25/11 às 01:46:32 (UTC−03:00), `.\mvnw.cmd
 | Sequência | Alocação atômica validada, com contador independente por empresa e exercício. |
 | Serviços de lançamento | Incrementos 1 a 3 validados. Criação de rascunho, inclusão e remoção de partidas manuais, confirmação com numeração atômica e estorno completo disponíveis. |
 | Livro Diário | Incremento 4A validado. Serviço de emissão e consulta compartilhada de partidas escrituradas disponíveis. |
+| Livro Razão | Incremento 4B validado. Emissão por conta analítica e apuração compartilhada de saldos disponíveis. |
 | API/frontend | Estado completo a inspecionar; integração essencial pendente. |
 
 ### Arquivos e contratos do incremento 1
@@ -97,6 +100,18 @@ O serviço agrupa as linhas em DTOs imutáveis, com listas copiadas e sem expor 
 
 A emissão abre uma transação de leitura com `REPEATABLE_READ` quando executada sem transação externa, mantendo autorização, exercício e movimentos no mesmo snapshot. Se a chamada participar de uma transação externa com isolamento inferior, prevalece o isolamento externo e as validações e a consulta podem usar snapshots diferentes. Cabeçalhos, partidas e referências ainda compartilham o snapshot da instrução SQL de movimentos.
 
+### Contrato do incremento 4B
+
+`LivroRazaoService.emitir(UUID empresaId, UUID usuarioId, UUID exercicioId, UUID contaId, LocalDate inicio, LocalDate fim)` retorna um `LivroRazao` para uma conta analítica do plano da empresa e um intervalo inclusivo contido no exercício. A seleção de uma conta é obrigatória. O serviço rejeita explicitamente contas sintéticas, evitando agregação com seus descendentes. Os DTOs são imutáveis, com cópia da lista de movimentos, e apresentam a identificação e a natureza cadastrada da conta, os saldos e as partidas individuais com referências, históricos e saldo acumulado.
+
+`ConsultaContabil` centraliza a validação de usuário ativo, titularidade, empresa ativa e não arquivada, exercício e intervalo. A extração preservou a ordem, as condições e as mensagens de erro da validação do Diário. A consulta original manteve os mesmos filtros e ordenação, e os cinco testes do Diário passaram após a mudança.
+
+A sobrecarga de `buscarMovimentosEscriturados` filtra por conta diretamente no banco e lê as partidas desde o início do exercício até o fim do recorte em um único SQL. Preserva movimentos históricos de contas inativas e de exercícios e períodos encerrados. Inclui confirmados, originais estornados e estornos confirmados nas respectivas datas, excluindo rascunhos. A reconciliação automatizada com o Diário compara as partidas da conta na mesma ordem, com seus identificadores, valores e históricos.
+
+`ApuracaoSaldos` concentra a lógica reutilizável no Balancete. Os movimentos anteriores ao início do intervalo, incluindo lançamentos `ABERTURA` escriturados no exercício, compõem o saldo anterior. Os movimentos do intervalo geram os totais de débito e crédito e o saldo acumulado após cada partida. O saldo final é o saldo anterior mais os débitos menos os créditos. Os débitos têm efeito positivo e os créditos, negativo. O sinal determina a natureza efetiva do saldo, devedor, credor ou zerado, independentemente da natureza cadastrada. A apuração usa `BigDecimal` sem arredondar nem restringir o total à precisão de uma partida.
+
+O Razão segue a estratégia de leitura `REPEATABLE_READ` do Diário. Em uma transação externa com isolamento inferior, prevalece o isolamento externo e as validações e a consulta podem observar snapshots diferentes. Saldo anterior, movimentos e saldo final continuam derivados das linhas da mesma instrução SQL.
+
 ## 4. Ambiente de execução
 
 | Perfil | JDBC | Role | Variáveis |
@@ -119,11 +134,11 @@ O padrão é `.\mvnw.cmd -o clean test`. Use `-Online` quando for necessário ob
 
 O script verifica variáveis e arquivos locais que podem sobrescrever a execução, solicita a senha de `lex_test_runner` no terminal e exige a resposta `lex_test|lex_test_runner|5432|f` do `psql` antes de iniciar o Maven. `PGPASSWORD` é removida logo após a consulta e `TEST_DB_*` é limpo ao final, inclusive em caso de falha. Consulte `$LASTEXITCODE` para o resultado da execução e confira o destino nos logs do Spring e do Flyway.
 
-O modo padrão do script foi validado nas suítes de 68, 87 e 92 testes. Para JUnit no IntelliJ, use `TEST_DB_*` nas configurações locais All in lex e LexApplicationTests. A atualização dessas configurações ainda não foi confirmada. Uma IDE já aberta não herda variáveis de um novo terminal.
+O modo padrão do script foi validado nas suítes de 68, 87, 92 e 97 testes. Para JUnit no IntelliJ, use `TEST_DB_*` nas configurações locais All in lex e LexApplicationTests. A atualização dessas configurações ainda não foi confirmada. Uma IDE já aberta não herda variáveis de um novo terminal.
 
-## 5. Próxima etapa — Livro Razão e apuração compartilhada de saldos
+## 5. Próxima etapa — Entrada de saldos iniciais e continuidade patrimonial
 
-Com o Livro Diário concluído no incremento 4A, a próxima etapa é implementar o Livro Razão e a apuração compartilhada de saldos a partir dos movimentos efetivamente escriturados.
+A próxima etapa é implementar a entrada de saldos iniciais e definir a continuidade patrimonial entre exercícios. A apuração atual se limita aos movimentos do exercício selecionado. A definição do transporte deve evitar contabilizar duas vezes o mesmo saldo patrimonial quando houver lançamentos de abertura.
 
 **Regra da escrituração efetiva.** Lançamentos `CONFIRMADOS`, inclusive os estornos confirmados, e lançamentos originais `ESTORNADOS` integram a escrituração. Cada um produz efeitos na sua própria data contábil, respeitado o corte do relatório. Lançamentos em `RASCUNHO` ficam fora dos saldos. O original e seu estorno podem produzir efeitos em períodos diferentes.
 
@@ -131,6 +146,7 @@ Com o Livro Diário concluído no incremento 4A, a próxima etapa é implementar
 
 - P0: saldos iniciais, escrituração, demonstrações e fechamento automatizado. Na sequência, estoque PEPS, ativos e depreciação, conforme a meta de recuperação em [decisoes-e-cronograma.md](decisoes-e-cronograma.md).
 - P0: entregar link e manual. O enunciado confirma Diário, Razão, Balance (Balancete no planejamento), BP, DRE e os módulos de estoque, ativos e depreciação. Ver [requisitos-academicos.md](requisitos-academicos.md) para orientações de aula, PDFs e a ressalva do modelo de DRE.
+- A interface, a geração de PDFs e a integração da auditoria aos fluxos seguem pendentes. A exportação em PDF deverá contemplar o Livro Razão integral, além da emissão individual por conta disponível no serviço atual.
 - O projeto adotará um modelo próprio de DRE, conforme a decisão já registrada. A implementação pode avançar enquanto permanece a ressalva acadêmica sobre a disponibilidade do modelo do professor e eventuais diferenças de formato. [Requisitos acadêmicos](requisitos-academicos.md#4-enunciado-orientações-de-aula-e-decisões-complementares).
 - P1: integrar autenticação e utilização efetiva da auditoria, conectar o estorno às reversões operacionais e ampliar a cobertura de isolamento para os próximos fluxos. Avaliar proteção adicional contra destino errado antes do contexto Spring.
 - P1: um contador legado defasado pode colidir com número já utilizado. A restrição de unicidade rejeita a confirmação e a transação reverte a alocação. A reconciliação de dados legados permanece pendente caso a divergência seja encontrada.
@@ -145,5 +161,6 @@ Com o Livro Diário concluído no incremento 4A, a próxima etapa é implementar
 - 25/11: incremento 2 aprovado com 68 testes após a correção do tratamento de esgotamento. V6 e modo padrão do script de testes validados.
 - 25/11: incremento 3 aprovado com 87 testes. Núcleo de lançamentos validado, incluindo estorno e cancelamento.
 - 25/11: incremento 4A concluído antecipadamente, com Livro Diário e consulta compartilhada de movimentos escriturados. Suíte de 92 testes aprovada.
+- 25/11: incremento 4B concluído antecipadamente, com Livro Razão por conta e apuração compartilhada de saldos. Suíte de 97 testes aprovada.
 
 Fontes: planejamento de 22/11; relatórios do Codex e logs PostgreSQL/Maven/Git de 25/11 fornecidos pelo desenvolvedor. Este documento não substitui inspeção do código vigente.

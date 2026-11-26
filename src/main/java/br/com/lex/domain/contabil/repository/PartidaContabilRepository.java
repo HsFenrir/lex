@@ -26,7 +26,7 @@ public interface PartidaContabilRepository
 
     List<DadosPartida> findAllProjetadasByLancamentoIdOrderByIdAsc(UUID lancamentoId);
 
-    @Query("""
+    String MOVIMENTOS_ESCRITURADOS = """
             select l.id as lancamentoId, l.periodoId as periodoId, l.data as data, l.numero as numero,
                    l.historico as historicoLancamento, l.origem as origem, l.status as status,
                    original.id as originalId, original.exercicioId as exercicioOriginalId,
@@ -41,13 +41,25 @@ public interface PartidaContabilRepository
               and l.data between :inicio and :fim
               and l.status in (br.com.lex.domain.contabil.enums.StatusLancamento.CONFIRMADO,
                                br.com.lex.domain.contabil.enums.StatusLancamento.ESTORNADO)
-            order by l.data, l.numero, l.id, p.id
-            """)
+            """;
+
+    String ORDEM_ESCRITURACAO = " order by l.data, l.numero, l.id, p.id";
+
+    @Query(MOVIMENTOS_ESCRITURADOS + ORDEM_ESCRITURACAO)
     List<MovimentoEscriturado> buscarMovimentosEscriturados(
             @Param("empresaId") UUID empresaId,
             @Param("exercicioId") UUID exercicioId,
             @Param("inicio") LocalDate inicio,
             @Param("fim") LocalDate fim
+    );
+
+    @Query(MOVIMENTOS_ESCRITURADOS + " and p.contaContabilId = :contaId" + ORDEM_ESCRITURACAO)
+    List<MovimentoEscriturado> buscarMovimentosEscriturados(
+            @Param("empresaId") UUID empresaId,
+            @Param("exercicioId") UUID exercicioId,
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim,
+            @Param("contaId") UUID contaId
     );
 
     interface MovimentoEscriturado {
