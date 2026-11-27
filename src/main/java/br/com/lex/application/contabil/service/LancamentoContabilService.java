@@ -342,8 +342,23 @@ public class LancamentoContabilService {
         if (lancamento.getOrigem() == OrigemLancamento.ABERTURA && numero != 1L) {
             throw new IllegalStateException("A abertura deve ser o primeiro lançamento escriturado no exercício.");
         }
+        validarLimiteDaAbertura(lancamento);
         lancamento.confirmar(numero, usuario, OffsetDateTime.now());
         lancamentoRepository.flush();
+    }
+
+    private void validarLimiteDaAbertura(LancamentoContabil lancamento) {
+        if (lancamento.getOrigem() == OrigemLancamento.ABERTURA) {
+            return;
+        }
+        // Em READ COMMITTED, esta instrução vê a abertura confirmada enquanto o UPSERT aguardava a sequência.
+        // Com snapshot fixo, o PostgreSQL rejeita a atualização concorrente da sequência se ela mudou fora do snapshot.
+        // ABERTURA identifica a migração na V6. O transporte futuro deve ter identificação própria.
+        lancamentoRepository.buscarDataAberturaMigracao(lancamento.getEmpresaId(), lancamento.getExercicioId())
+                .filter(lancamento.getData()::isBefore)
+                .ifPresent(data -> {
+                    throw new IllegalStateException("A data contábil não pode ser anterior à abertura de migração em " + data + ".");
+                });
     }
 
     private void validarPoliticaAbertura(UUID empresaId, ExercicioContabil exercicio) {

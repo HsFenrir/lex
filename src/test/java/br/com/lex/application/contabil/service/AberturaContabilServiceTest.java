@@ -35,11 +35,14 @@ import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 
@@ -251,6 +254,194 @@ class AberturaContabilServiceTest {
         });
     }
 
+    @Test
+    void revalidaRascunhoAnteriorEPermiteMesmaDataPosteriorERetroativoValido() {
+        comCenario((schema, dados) -> {
+            UUID anterior = executar(schema, () -> criarManual(dados, DATA.minusDays(1)));
+            assertThat(executar(schema, () -> abrir(dados)).numero()).isEqualTo(1);
+
+            assertThatThrownBy(() -> executar(schema, () -> confirmarManual(dados, anterior)))
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("anterior à abertura");
+            executar(schema, () -> {
+                conferirPersistencia(dados, 2, 4, 1L);
+                conferirRascunho(anterior);
+                assertThat(confirmarManual(dados, criarManual(dados, DATA))).isEqualTo(2L);
+                assertThat(confirmarManual(dados, criarManual(dados, DATA.plusDays(2)))).isEqualTo(3L);
+                assertThat(confirmarManual(dados, criarManual(dados, DATA.plusDays(1)))).isEqualTo(4L);
+                return null;
+            });
+        });
+    }
+
+    @Test
+    void preservaMarcoAposEstornoESomenteNoExercicioDaEmpresa() {
+        comCenario((schema, dados) -> {
+            AberturaConfirmada abertura = executar(schema, () -> abrir(dados));
+            UUID anterior = executar(schema, () -> {
+                UUID estorno = lancamentos.criarRascunhoEstorno(dados.empresa(), dados.usuario(), abertura.lancamentoId(),
+                        dados.exercicio(), dados.periodo(), DATA.plusDays(1), "Estorno").getId();
+                lancamentos.confirmarEstorno(dados.empresa(), dados.usuario(), estorno);
+                return criarManual(dados, DATA.minusDays(1));
+            });
+            assertThatThrownBy(() -> executar(schema, () -> confirmarManual(dados, anterior)))
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("anterior à abertura");
+            executar(schema, () -> {
+                conferirRascunho(anterior);
+                conferirPersistencia(dados, 3, 6, 2L);
+                assertThat(confirmarManual(dados, criarManual(dados, DATA.plusDays(2)))).isEqualTo(3L);
+
+                Cenario outra = criarCenario();
+                assertThat(confirmarManual(outra, criarManual(outra, DATA.minusDays(1)))).isEqualTo(1L);
+                Cenario seguinte = criarExercicioSeguinte(dados);
+                assertThat(confirmarManual(seguinte, criarManual(seguinte, seguinte.data().minusDays(1))))
+                        .isEqualTo(1L);
+                return null;
+            });
+        });
+    }
+
+    @Test
+    void aberturaConcorrenteComPrecedenciaImpedeConfirmacaoAnterior() {
+        comCenario((schema, dados) -> {
+            UUID manual = executar(schema, () -> criarManual(dados, DATA.minusDays(1)));
+            ResultadoDisputa disputa = disputarSequencia(schema, () -> abrir(dados).numero(),
+                    () -> confirmarManual(dados, manual));
+
+            assertThat(disputa.primeiro()).isEqualTo(1L);
+            assertThat(disputa.erroSegundo()).isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("anterior à abertura");
+            executar(schema, () -> {
+                conferirPersistencia(dados, 2, 4, 1L);
+                conferirAberturaNumeroUm(dados);
+                conferirRascunho(manual);
+                return null;
+            });
+        });
+    }
+
+    @Test
+    void aberturaConcorrenteComPrecedenciaPermiteConfirmacaoComDataValida() {
+        comCenario((schema, dados) -> {
+            UUID manual = executar(schema, () -> criarManual(dados, DATA));
+            ResultadoDisputa disputa = disputarSequencia(schema, () -> abrir(dados).numero(),
+                    () -> confirmarManual(dados, manual));
+
+            assertThat(disputa.primeiro()).isEqualTo(1L);
+            assertThat(disputa.erroSegundo()).isNull();
+            assertThat(disputa.segundo()).isEqualTo(2L);
+            executar(schema, () -> {
+                conferirPersistencia(dados, 2, 4, 2L);
+                conferirAberturaNumeroUm(dados);
+                assertThat(jdbc.queryForObject(
+                        "select numero from lancamento_contabil where id = ? and status = 'CONFIRMADO'", Long.class, manual))
+                        .isEqualTo(2L);
+                return null;
+            });
+        });
+    }
+
+    @Test
+    void confirmacaoManualComPrecedenciaImpedeAberturaConcorrente() {
+        comCenario((schema, dados) -> {
+            UUID manual = executar(schema, () -> criarManual(dados, DATA.minusDays(1)));
+            ResultadoDisputa disputa = disputarSequencia(schema, () -> confirmarManual(dados, manual),
+                    () -> abrir(dados).numero());
+
+            assertThat(disputa.primeiro()).isEqualTo(1L);
+            assertThat(disputa.erroSegundo()).isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("primeiro lançamento");
+            executar(schema, () -> {
+                conferirPersistencia(dados, 1, 2, 1L);
+                assertThat(jdbc.queryForObject("""
+                        select id from lancamento_contabil where numero = 1
+                          and status = 'CONFIRMADO' and origem = 'MANUAL'
+                        """, UUID.class)).isEqualTo(manual);
+                return null;
+            });
+        });
+    }
+
+    private ResultadoDisputa disputarSequencia(String schema, Supplier<Long> primeira, Supplier<Long> segunda) {
+        CompletableFuture<Integer> primeiraSessao = new CompletableFuture<>();
+        CompletableFuture<Integer> segundaSessao = new CompletableFuture<>();
+        CountDownLatch liberarCommit = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<Long> primeiraOperacao = executor.submit(() -> executar(schema, () -> {
+                Long numero = primeira.get();
+                primeiraSessao.complete(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                try {
+                    assertThat(liberarCommit.await(10, TimeUnit.SECONDS)).isTrue();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(e);
+                }
+                return numero;
+            }));
+            int bloqueadora = primeiraSessao.get(10, TimeUnit.SECONDS);
+            Future<Long> segundaOperacao = executor.submit(() -> executar(schema, () -> {
+                segundaSessao.complete(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                return segunda.get();
+            }));
+            int bloqueada = segundaSessao.get(5, TimeUnit.SECONDS);
+            aguardarBloqueioNaSequencia(bloqueadora, bloqueada);
+            liberarCommit.countDown();
+
+            Long primeiro = primeiraOperacao.get(10, TimeUnit.SECONDS);
+            try {
+                return new ResultadoDisputa(primeiro, segundaOperacao.get(10, TimeUnit.SECONDS), null);
+            } catch (ExecutionException e) {
+                return new ResultadoDisputa(primeiro, null, e.getCause());
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(e);
+        } catch (ExecutionException | TimeoutException e) {
+            throw new AssertionError(e);
+        } finally {
+            liberarCommit.countDown();
+            executor.shutdownNow();
+            aguardarEncerramento(executor);
+        }
+    }
+
+    private void aguardarBloqueioNaSequencia(int bloqueadora, int bloqueada) throws InterruptedException {
+        long limite = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        do {
+            Boolean aguardando = jdbc.queryForObject("""
+                    select ? = any(pg_blocking_pids(pid)) and query ilike '%insert into sequencia_lancamento%'
+                    from pg_stat_activity where pid = ?
+                    """, Boolean.class, bloqueadora, bloqueada);
+            if (Boolean.TRUE.equals(aguardando)) {
+                return;
+            }
+            TimeUnit.MILLISECONDS.sleep(25);
+        } while (System.nanoTime() < limite);
+        throw new AssertionError("A segunda transação não aguardou a primeira na sequência contábil.");
+    }
+
+    private void conferirAberturaNumeroUm(Cenario dados) {
+        assertThat(jdbc.queryForObject("""
+                select data from lancamento_contabil
+                where empresa_id = ? and exercicio_id = ? and numero = 1
+                  and origem = 'ABERTURA' and status = 'CONFIRMADO'
+                """, LocalDate.class, dados.empresa(), dados.exercicio())).isEqualTo(DATA);
+    }
+
+    private void conferirRascunho(UUID manual) {
+        assertThat(jdbc.queryForObject("""
+                select status = 'RASCUNHO' and numero is null and confirmado_por is null and confirmado_em is null
+                from lancamento_contabil where id = ?
+                """, Boolean.class, manual)).isTrue();
+    }
+
+    private long confirmarManual(Cenario dados, UUID id) {
+        return lancamentos.confirmarLancamento(dados.empresa(), dados.usuario(), id).getNumero();
+    }
+
+    private record ResultadoDisputa(Long primeiro, Long segundo, Throwable erroSegundo) {
+    }
+
     private AberturaConfirmada tentarConcorrente(String schema, Cenario dados,
                                                  CountDownLatch prontas, CountDownLatch largada) {
         try {
@@ -328,8 +519,12 @@ class AberturaContabilServiceTest {
     }
 
     private UUID criarManual(Cenario dados) {
+        return criarManual(dados, dados.data());
+    }
+
+    private UUID criarManual(Cenario dados, LocalDate data) {
         UUID id = lancamentos.criarRascunho(dados.empresa(), dados.usuario(), dados.exercicio(), dados.periodo(),
-                dados.data(), "Manual").getId();
+                data, "Manual").getId();
         for (SaldoPorConta saldo : saldos(dados)) {
             lancamentos.adicionarPartida(dados.empresa(), dados.usuario(), id, saldo.contaId(),
                     saldo.tipo(), saldo.valor(), null);

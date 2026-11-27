@@ -10,6 +10,7 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -55,6 +56,17 @@ public interface LancamentoContabilRepository
 
     boolean existsByEmpresaIdAndExercicioIdAndStatusIn(
             UUID empresaId, UUID exercicioId, Collection<StatusLancamento> status
+    );
+
+    @Query("""
+            select min(l.data) from LancamentoContabil l
+            where l.empresaId = :empresaId and l.exercicioId = :exercicioId
+              and l.origem = br.com.lex.domain.contabil.enums.OrigemLancamento.ABERTURA
+              and l.status in (br.com.lex.domain.contabil.enums.StatusLancamento.CONFIRMADO,
+                               br.com.lex.domain.contabil.enums.StatusLancamento.ESTORNADO)
+            """)
+    Optional<LocalDate> buscarDataAberturaMigracao(
+            @Param("empresaId") UUID empresaId, @Param("exercicioId") UUID exercicioId
     );
 
     Optional<LancamentoContabil>
