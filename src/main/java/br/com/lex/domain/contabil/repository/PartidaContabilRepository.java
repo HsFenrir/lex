@@ -26,6 +26,13 @@ public interface PartidaContabilRepository
 
     List<DadosPartida> findAllProjetadasByLancamentoIdOrderByIdAsc(UUID lancamentoId);
 
+    String FILTRO_ESCRITURACAO = """
+            where l.empresaId = :empresaId and l.exercicioId = :exercicioId
+              and l.data between :inicio and :fim
+              and l.status in (br.com.lex.domain.contabil.enums.StatusLancamento.CONFIRMADO,
+                               br.com.lex.domain.contabil.enums.StatusLancamento.ESTORNADO)
+            """;
+
     String MOVIMENTOS_ESCRITURADOS = """
             select l.id as lancamentoId, l.periodoId as periodoId, l.data as data, l.numero as numero,
                    l.historico as historicoLancamento, l.origem as origem, l.status as status,
@@ -37,11 +44,7 @@ public interface PartidaContabilRepository
             join p.lancamento l
             join p.contaContabil c
             left join l.estornoDe original
-            where l.empresaId = :empresaId and l.exercicioId = :exercicioId
-              and l.data between :inicio and :fim
-              and l.status in (br.com.lex.domain.contabil.enums.StatusLancamento.CONFIRMADO,
-                               br.com.lex.domain.contabil.enums.StatusLancamento.ESTORNADO)
-            """;
+            """ + FILTRO_ESCRITURACAO;
 
     String ORDEM_ESCRITURACAO = " order by l.data, l.numero, l.id, p.id";
 
@@ -80,6 +83,27 @@ public interface PartidaContabilRepository
         TipoPartida getTipo();
         BigDecimal getValor();
         String getHistoricoPartida();
+    }
+
+    @Query("""
+            select p.contaContabilId as contaId, p.tipo as tipo,
+                   sum(case when l.data < :corte then p.valor else 0 end) as totalAnterior,
+                   sum(case when l.data >= :corte then p.valor else 0 end) as totalPeriodo
+            from PartidaContabil p join p.lancamento l
+            """ + FILTRO_ESCRITURACAO + " group by p.contaContabilId, p.tipo")
+    List<TotaisEscriturados> somarMovimentosEscriturados(
+            @Param("empresaId") UUID empresaId,
+            @Param("exercicioId") UUID exercicioId,
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim,
+            @Param("corte") LocalDate corte
+    );
+
+    interface TotaisEscriturados {
+        UUID getContaId();
+        TipoPartida getTipo();
+        BigDecimal getTotalAnterior();
+        BigDecimal getTotalPeriodo();
     }
 
     interface DadosPartida {

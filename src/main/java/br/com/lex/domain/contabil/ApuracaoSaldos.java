@@ -21,11 +21,22 @@ public final class ApuracaoSaldos {
 
     public void registrar(LocalDate data, TipoPartida tipo, BigDecimal valor) {
         if (data.isBefore(inicio)) {
-            anterior = anterior.add(tipo == TipoPartida.DEBITO ? valor : valor.negate());
-        } else if (tipo == TipoPartida.DEBITO) {
-            debitos = debitos.add(valor);
+            registrarTotais(tipo, valor, ZERO);
         } else {
-            creditos = creditos.add(valor);
+            registrarTotais(tipo, ZERO, valor);
+        }
+    }
+
+    public void registrarTotais(TipoPartida tipo, BigDecimal totalAnterior, BigDecimal totalPeriodo) {
+        switch (tipo) {
+            case DEBITO -> {
+                anterior = anterior.add(totalAnterior);
+                debitos = debitos.add(totalPeriodo);
+            }
+            case CREDITO -> {
+                anterior = anterior.subtract(totalAnterior);
+                creditos = creditos.add(totalPeriodo);
+            }
         }
     }
 
@@ -38,6 +49,11 @@ public final class ApuracaoSaldos {
     }
 
     public record Resumo(Saldo saldoAnterior, BigDecimal totalDebitos, BigDecimal totalCreditos, Saldo saldoFinal) {
+        public Resumo somar(Resumo outro) {
+            return new Resumo(new Saldo(saldoAnterior.valor().add(outro.saldoAnterior.valor())),
+                    totalDebitos.add(outro.totalDebitos), totalCreditos.add(outro.totalCreditos),
+                    new Saldo(saldoFinal.valor().add(outro.saldoFinal.valor())));
+        }
     }
 
     public record Saldo(BigDecimal valor) {
