@@ -21,6 +21,12 @@ public interface ContaContabilRepository
     Optional<ContaContabil> findByIdAndPlanoContasId(UUID id, UUID planoContasId);
 
     @Query("""
+            select c.id from ContaContabil c join c.planoContas plano join c.modeloContaContabil modelo
+            where plano.empresaId = :empresaId and modelo.modeloVersao = 1 and modelo.codigo = :codigo
+            """)
+    Optional<UUID> buscarContaDoModeloPadrao(@Param("empresaId") UUID empresaId, @Param("codigo") String codigo);
+
+    @Query("""
             select c.codigo as codigo, c.nome as nome, c.natureza as natureza, c.tipo as tipo
             from ContaContabil c join c.planoContas plano
             where c.id = :contaId and plano.empresaId = :empresaId

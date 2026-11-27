@@ -1,15 +1,15 @@
 # LEX — Andamento e passagem de contexto
 
-Atualização em 26/11/2026, após a conclusão do incremento 4D. Apresentação em 30/11/2026.
+Atualização em 26/11/2026, após a conclusão dos incrementos 6A, 6B e 6C na camada contábil. Apresentação em 30/11/2026.
 
 ## 1. Base verificada
 
 - Branch main sincronizada com origin/main e origin/HEAD segundo o log de push fornecido pelo desenvolvedor.
-- Incremento 4C publicado em `677d725`. Incremento 5A publicado em `d82f341` (`feat: implement trial balance and hierarchical account aggregation`), com seis arquivos, 512 inserções e nove exclusões. Incremento 5B publicado em `37d2da4`, checkpoint de base do 4D. O incremento 4D está apto para commit.
+- Incremento 4C publicado em `677d725`. Incremento 5A publicado em `d82f341` (`feat: implement trial balance and hierarchical account aggregation`), com seis arquivos, 512 inserções e nove exclusões. Incremento 5B publicado em `37d2da4`. Incremento 4D publicado em `bba714b`, checkpoint de base do incremento 6, que está apto para commit.
 - As metas de 25/11 foram integralmente concluídas. Os serviços de Livro Diário e Livro Razão foram antecipados em relação às atividades previstas para 26/11.
 - AGENTS.md e documentação inicial publicados em 9d41a94. Incremento 1 publicado em 54a4b39, script de testes em 9fbd7d1, escopo acadêmico confirmado em 1bf3fbc e incremento 2 publicado em 47cf2a8.
 - Java 21.0.10, Maven Wrapper (Maven 3.10.1 relatado pelo Codex), Spring Boot 4.1.2, Hibernate ORM 7.4.13.Final, PostgreSQL 18.4, conforme relatórios/logs locais. Conferir pom.xml antes de mudanças.
-- No incremento 4D, foram compiladas 49 fontes principais e 14 fontes de teste. Flyway V1–V6 validado, schema `public` na V6 e Hibernate em `ddl-auto: validate`.
+- No incremento 6, foram compiladas 50 fontes principais e 15 fontes de teste. Flyway V1–V7 validado, schema `public` na V7 e Hibernate em `ddl-auto: validate`.
 
 ## 2. Evidência de regressão
 
@@ -19,13 +19,16 @@ No 5B, o desenvolvedor executou `.\scripts\test.ps1` em 26/11/2026, com término
 
 No 4D, o desenvolvedor executou `.\scripts\test.ps1` em 26/11/2026, com término às 22:49:19 (UTC−03:00), duração de 01:19 min e `BUILD SUCCESS`. Os 14 relatórios Surefire confirmam **121 testes, zero falhas, zero erros e zero ignorados**. `AberturaContabilServiceTest` teve 13 casos aprovados, incluindo os cinco novos. Os 116 anteriores também passaram. As três classes alteradas foram compiladas após as últimas alterações nas fontes e antes da geração dos relatórios.
 
-Perfil Spring `test`, PostgreSQL 18.4 em `jdbc:postgresql://127.0.0.1:5432/lex_test`. Foram validadas seis migrations, com o schema `public` na V6 e aplicação integral de V1 a V6 em 22 schemas descartáveis, com 13 de abertura, três de confirmação e seis de estorno. Os testes aguardam o encerramento das threads com timeout e programam a remoção de cada schema gerado em `finally`. O script exige a role `lex_test_runner` e a ausência de privilégio `CONNECT` em `lex_dev` antes de iniciar o Maven.
+Após a correção da fixture de abertura, o desenvolvedor executou `.\scripts\test.ps1` em 26/11/2026. A execução terminou às 23:44:27 (UTC−03:00), em 01:31 min, com `BUILD SUCCESS`. Os 15 relatórios Surefire correspondem às fontes atuais e confirmam **133 testes, zero falhas, zero erros e zero ignorados**. `FechamentoContabilServiceTest` aprovou 12 de 12 casos e `AberturaContabilServiceTest`, 13 de 13. Os 121 casos anteriores foram preservados. As classes e a cópia da V7 no diretório de compilação são posteriores às fontes e anteriores aos relatórios.
+
+A suíte usou o perfil `test` no PostgreSQL 18.4 em `jdbc:postgresql://127.0.0.1:5432/lex_test`. Foram validadas sete migrations, com o schema `public` na V7 e 28 schemas descartáveis. A execução anterior aplicou a V7 sobre o `public` que estava na V6. A suíte cobre também o upgrade com exercício legado em schema descartável e a instalação desde a V1. Os testes aguardam o encerramento das threads com timeout e removem os schemas em `finally`. O script exige a role `lex_test_runner` e a ausência de privilégio `CONNECT` em `lex_dev` antes de iniciar o Maven.
 
 | Classe | Testes aprovados |
 |---|---:|
 | AberturaContabilServiceTest | 13 |
 | BalanceteServiceTest | 5 |
 | EstornoLancamentoContabilServiceTest | 19 |
+| FechamentoContabilServiceTest | 12 |
 | ConfirmacaoLancamentoContabilServiceTest | 18 |
 | DemonstracoesContabeisServiceTest | 6 |
 | LancamentoContabilServiceTest | 25 |
@@ -37,7 +40,7 @@ Perfil Spring `test`, PostgreSQL 18.4 em `jdbc:postgresql://127.0.0.1:5432/lex_t
 | PartidaContabilRepositoryTest | 5 |
 | PlanoContasRepositoryTest | 1 |
 | LexApplicationTests | 1 |
-| Total | 121 |
+| Total | 133 |
 
 Os cenários negativos incluem violações esperadas das chaves estrangeiras `fk_conta_pai` e `fk_conta_reduzida` e das regras de unicidade `uq_lancamento_estorno_unico` e `uq_lancamento_numero_empresa_exercicio`. Os testes respectivos passaram. A colisão de número foi provocada após a alocação para verificar que o lançamento permanece em rascunho e a atualização do contador é revertida.
 
@@ -49,7 +52,7 @@ Na validação do incremento 1, em 25/11 às 01:46:32 (UTC−03:00), `.\mvnw.cmd
 
 | Área | Estado |
 |---|---|
-| Usuário, empresa, auditoria | Estrutura de domínio/persistência existente. O serviço de lançamento valida a titularidade da empresa. Autenticação e utilização efetiva da auditoria nos fluxos seguem pendentes. |
+| Usuário, empresa, auditoria | Titularidade validada nos serviços. Fechamento e continuidade têm auditoria localizada. Autenticação e auditoria geral seguem pendentes. |
 | Plano de contas | Modelo, contas, serviço e repositórios existentes; testes aprovados. |
 | Exercício/período | Entidades, repositórios e constraints existentes. |
 | Lançamento/partida | Entidades e repositórios, mapeamentos compostos e testes de persistência aprovados. |
@@ -60,6 +63,7 @@ Na validação do incremento 1, em 25/11 às 01:46:32 (UTC−03:00), `.\mvnw.cmd
 | Saldos iniciais | Abertura manual no primeiro exercício da empresa. O 4D valida o limite temporal da migração em cada confirmação. |
 | Balancete de Verificação | Incremento 5A publicado. Apuração por conta e agregação pela hierarquia do plano. |
 | Balanço Patrimonial e DRE | Incremento 5B validado. Emissão por data-base e intervalo, respectivamente. |
+| Fechamento e continuidade | Incrementos 6A, 6B e 6C validados na camada contábil. Integração com os módulos operacionais pendente. |
 | API/frontend | Estado completo a inspecionar; integração essencial pendente. |
 
 ### Arquivos e contratos do incremento 1
@@ -98,7 +102,7 @@ As operações genéricas de adição e remoção de partidas e de confirmação
 
 O bloqueio do original precede o do estorno existente. Os demais recursos seguem a ordem definida no incremento 2. O índice único protege a reserva, e a confirmação do estorno, a alocação do número e a transição do original ocorrem em uma única transação. Os testes com transações independentes cobrem criação e confirmação concorrentes, confirmação contra cancelamento, cancelamento contra nova criação e estorno concorrente com confirmação manual no mesmo exercício.
 
-As reversões de lançamentos de origem operacional dependem de integração futura com os respectivos módulos, incluindo estoque, ativos, depreciação e fechamento. O registro efetivo do fluxo na auditoria também permanece pendente.
+As reversões de lançamentos de origem operacional dependem da integração com estoque, ativos e depreciação. O fluxo genérico rejeita estorno do encerramento técnico e da abertura automatizada. A auditoria geral dos estornos permanece pendente.
 
 ### Contrato do incremento 4A
 
@@ -155,7 +159,7 @@ O PL apresentado soma o PL escriturado e o resultado líquido ainda remanescente
 
 A DRE agrupa movimentos por conta, tipo e origem, preservando também a origem do original estornado. Separa movimentos econômicos, saldos importados na abertura, estornos de abertura e acumulado do exercício até o fim do recorte. O saldo importado entra no resultado demonstrado quando o recorte começa no início do exercício e alcança a abertura. Nos recortes parciais que atingem esse histórico, o relatório sinaliza a falta de detalhamento e expõe a abertura separadamente quando ela está no intervalo. Os estornos afetam as respectivas datas contábeis. A DRE usa modelo próprio aprovado pelo desenvolvedor. A disponibilidade do modelo do professor permanece como ressalva acadêmica.
 
-A V6 possui as origens `MANUAL`, `ESTOQUE`, `ATIVO`, `DEPRECIACAO`, `ESTORNO` e `ABERTURA`. Ainda falta uma origem específica para distinguir os movimentos técnicos de encerramento na DRE. Para o incremento 6, propõe-se `ENCERRAMENTO`, sujeita à inspeção das constraints e à definição do tratamento dos respectivos estornos. A DRE deverá excluir esses efeitos técnicos, preservando os movimentos econômicos. O transporte patrimonial e a integração efetiva com auditoria continuam pendentes.
+A V7 acrescentou `ENCERRAMENTO`. A consulta da DRE exclui os movimentos técnicos identificados por essa origem, inclusive eventuais reversões identificadas pela origem do original. Os movimentos econômicos, os estornos ordinários e o tratamento da abertura de migração são preservados.
 
 As três emissões reutilizam as regras de autorização e escrituração e usam agregação em `BigDecimal`, sem arredondamento e sem consultas N+1. Em chamadas independentes, a transação de leitura `REPEATABLE_READ` mantém o snapshot entre consultas. Quando há transação externa com isolamento inferior, prevalece o isolamento externo.
 
@@ -168,6 +172,23 @@ A sequência da empresa e do exercício serializa as operações sem acrescentar
 Três testes em transações independentes observaram o bloqueio real na sequência antes de liberar o commit da primeira operação. Quando a abertura obteve precedência, a confirmação anterior ao marco foi rejeitada e a confirmação na mesma data recebeu o número 2. Quando a confirmação manual obteve precedência, a abertura foi rejeitada. As verificações persistentes confirmaram que o rollback devolve o número provisório, preserva o rascunho manual rejeitado sem dados de confirmação e evita resíduos da abertura rejeitada. Os demais testes cobriram o marco após estorno, o isolamento por empresa e exercício e a aceitação de retroativos válidos.
 
 A proteção fica na camada de aplicação. Escritas diretas que ignorem o serviço podem contorná-la. Os futuros módulos operacionais devem reutilizar o núcleo de confirmação. O transporte patrimonial deve distinguir a abertura automatizada da abertura manual de migração, que estabelece o limite temporal.
+
+### Contratos dos incrementos 6A, 6B e 6C
+
+- `FechamentoContabilService.encerrarPeriodo(UUID empresaId, UUID usuarioId, UUID exercicioId, UUID periodoId)` retorna `PeriodoEncerrado` com exercício, período e data final. Exige exercício e período abertos, meses anteriores cadastrados encerrados, ausência de rascunhos e escrituração equilibrada. Preserva os saldos de resultado. Dezembro fica reservado ao fechamento anual.
+- `FechamentoContabilService.encerrarExercicio(UUID empresaId, UUID usuarioId, UUID exercicioId)` retorna `ExercicioEncerrado` com os exercícios de origem e destino, o resultado líquido e os IDs dos lançamentos técnicos quando gerados. Exige dezembro aberto, meses anteriores cadastrados encerrados, ausência de rascunhos, equilíbrio e classificação suficiente.
+
+O anual apura pelo Balancete os saldos analíticos até o fim do exercício e inverte as partidas para zerar as contas de resultado. A contrapartida usa **Lucros Acumulados (3.3.001)** ou **Prejuízos Acumulados (3.3.002)** pelo vínculo com a conta do modelo padrão versão 1. Resultado líquido zero dispensa a contrapartida de PL. Contas de resultado já zeradas dispensam o lançamento técnico. Saldos agregados superiores ao limite de `NUMERIC(19,2)` são divididos em partidas representáveis, sem arredondamento.
+
+A migration `V7__registrar_encerramento_e_continuidade.sql` admite a origem `ENCERRAMENTO` e garante sua unicidade por empresa e exercício. Adiciona `exercicio_origem_id` com unicidade e chave estrangeira no escopo da empresa. As migrations V1–V6 e os triggers de confirmação e imutabilidade foram preservados. O lançamento técnico é confirmado antes de encerrar dezembro e o exercício. A suíte confirma que a DRE permanece equivalente antes e depois do fechamento, que o BP mantém o equilíbrio com o resultado já escriturado no PL e que Diário, Razão e Balancete incluem os movimentos técnicos.
+
+A continuidade cria ou completa os 12 períodos do sucessor imediato e rejeita um destino incompatível ou com escrituração. Transporta apenas saldos analíticos de Ativo, Passivo e PL, inclusive redutoras e saldos invertidos. Contas inativas com saldo a escriturar bloqueiam a operação. Quando há saldo a transportar, a abertura usa a origem `ABERTURA`, o primeiro dia do exercício e o número 1. O vínculo distingue a abertura automatizada da abertura manual de migração e registra a continuidade mesmo quando o saldo zero dispensa um lançamento. Um exercício posterior com predecessor cadastrado exige esse vínculo antes de confirmar operações. A abertura manual segue restrita ao primeiro exercício.
+
+O fechamento usa `READ COMMITTED` e bloqueia os períodos em ordem cronológica, da origem para o destino, antes dos exercícios. Em seguida, valida autorização, contas e sequência no fluxo de confirmação. A verificação de rascunhos consulta a escrituração sem bloquear lançamentos de terceiros. Os testes em transações independentes observaram o bloqueio em disputas com confirmação manual, criação de rascunho, estorno, outro fechamento anual e confirmação no sucessor durante o transporte.
+
+O fechamento anual e o transporte gravam lançamentos, partidas, sequências, vínculo, estados e eventos em uma transação. O teste de falha forçada na confirmação da abertura verificou o rollback do conjunto. A auditoria localizada em `auditoria_evento` registra `ENCERRAR_PERIODO`, `ENCERRAR_EXERCICIO` e `TRANSPORTAR_SALDOS`, com empresa, usuário, data contábil e referências aplicáveis.
+
+A primeira execução do incremento teve 132 aprovações e um erro. O teste de abertura preservava corretamente o rascunho manual de 14/05/2026, rejeitado por ser anterior ao marco de migração de 15/05/2026, mesmo após o estorno da abertura. O rascunho passou a bloquear o fechamento de maio na preparação da continuidade. Depois das assertions de preservação, a fixture remove as partidas pelo serviço e exclui somente o cabeçalho via JPA, na ordem exigida pelas constraints e com os triggers ativos. A correção preservou as assertions e as regras de produção.
 
 ## 4. Ambiente de execução
 
@@ -191,21 +212,26 @@ O padrão é `.\mvnw.cmd -o clean test`. Use `-Online` quando for necessário ob
 
 O script verifica variáveis e arquivos locais que podem sobrescrever a execução, solicita a senha de `lex_test_runner` no terminal e exige a resposta `lex_test|lex_test_runner|5432|f` do `psql` antes de iniciar o Maven. `PGPASSWORD` é removida logo após a consulta e `TEST_DB_*` é limpo ao final, inclusive em caso de falha. Consulte `$LASTEXITCODE` para o resultado da execução e confira o destino nos logs do Spring e do Flyway.
 
-O modo padrão do script foi validado nas suítes de 68, 87, 92, 97, 105, 110, 116 e 121 testes. Para JUnit no IntelliJ, use `TEST_DB_*` nas configurações locais All in lex e LexApplicationTests. A atualização dessas configurações ainda não foi confirmada. Uma IDE já aberta não herda variáveis de um novo terminal.
+O modo padrão do script foi validado nas suítes de 68, 87, 92, 97, 105, 110, 116, 121 e 133 testes. Para JUnit no IntelliJ, use `TEST_DB_*` nas configurações locais All in lex e LexApplicationTests. A atualização dessas configurações ainda não foi confirmada. Uma IDE já aberta não herda variáveis de um novo terminal.
 
-## 5. Próxima etapa — Incremento 6
+## 5. Próxima etapa — 27/11/2026
 
-A próxima etapa é o fechamento automatizado e a continuidade patrimonial entre exercícios.
+As metas contábeis de 26/11/2026 foram concluídas. Em 27/11/2026, a próxima etapa é estoque PEPS, controle de ativos e depreciação linear, com contabilização integrada. Para retomar em nova sessão, usar os contratos da seção 3 e a suíte validada da seção 2 como base. A integração operacional deve reutilizar o núcleo de confirmação, incluindo o limite de migração e o bloqueio por calendário.
 
 **Regra da escrituração efetiva.** Lançamentos `CONFIRMADOS`, inclusive os estornos confirmados, e lançamentos originais `ESTORNADOS` integram a escrituração. Cada um produz efeitos na sua própria data contábil, respeitado o corte do relatório. Lançamentos em `RASCUNHO` ficam fora dos saldos. O original e seu estorno podem produzir efeitos em períodos diferentes.
 
 ## 6. Backlog e riscos
 
-- P0: continuidade patrimonial e fechamento automatizado. Na sequência, estoque PEPS, ativos e depreciação, conforme a meta de recuperação em [decisoes-e-cronograma.md](decisoes-e-cronograma.md).
+- P0: implementar estoque PEPS, controle de ativos e depreciação linear e integrar suas verificações ao fechamento. A integração operacional do fechamento está pendente. [Decisões e cronograma](decisoes-e-cronograma.md).
+- Conciliar os saldos contábeis de abertura com os controles operacionais de estoque e ativos, evitando lançamentos duplicados.
+- Implementar uma operação autorizada, transacional e auditável para cancelar ou excluir rascunhos manuais.
+- Definir a regularização de contas inativas com saldos relevantes antes de encerrar ou transportar seus valores.
+- Implementar a auditoria geral dos fluxos. Os eventos do fechamento e da continuidade já são registrados localmente.
+- Concluir API, autenticação, interface web, PDFs, implantação e manual e executar a validação ponta a ponta.
 - A correção após estorno da abertura deve permanecer possível por meio de lançamentos contábeis apropriados e rastreáveis.
 - A continuidade patrimonial deve distinguir a abertura manual de migração da abertura automatizada de exercícios subsequentes, evitando duplicidade entre o transporte e os lançamentos de abertura.
 - P0: entregar link e manual. O enunciado confirma Diário, Razão, Balance (Balancete no planejamento), BP, DRE e os módulos de estoque, ativos e depreciação. Ver [requisitos-academicos.md](requisitos-academicos.md) para orientações de aula, PDFs e a ressalva do modelo de DRE.
-- A interface, a geração de PDFs e a integração da auditoria aos fluxos seguem pendentes. A exportação em PDF deverá contemplar o Livro Razão integral, além da emissão individual por conta disponível no serviço atual.
+- A exportação em PDF deverá contemplar o Livro Razão integral, além da emissão individual por conta disponível no serviço atual.
 - O projeto adotará um modelo próprio de DRE, conforme a decisão já registrada. A implementação pode avançar enquanto permanece a ressalva acadêmica sobre a disponibilidade do modelo do professor e eventuais diferenças de formato. [Requisitos acadêmicos](requisitos-academicos.md#4-enunciado-orientações-de-aula-e-decisões-complementares).
 - P1: integrar autenticação e utilização efetiva da auditoria, conectar o estorno às reversões operacionais e ampliar a cobertura de isolamento para os próximos fluxos. Avaliar proteção adicional contra destino errado antes do contexto Spring.
 - P1: um contador legado defasado pode colidir com número já utilizado. A restrição de unicidade rejeita a confirmação e a transação reverte a alocação. A reconciliação de dados legados permanece pendente caso a divergência seja encontrada.
@@ -225,5 +251,6 @@ A próxima etapa é o fechamento automatizado e a continuidade patrimonial entre
 - 26/11: incremento 5A publicado em `d82f341`, com Balancete de Verificação e agregação hierárquica. Suíte de 110 testes aprovada.
 - 26/11: incremento 5B concluído, com Balanço Patrimonial e DRE. Suíte de 116 testes aprovada.
 - 26/11: incremento 4D concluído, com proteção temporal da abertura e teste direto da concorrência com confirmação manual. Suíte de 121 testes aprovada.
+- 26/11: incrementos 6A, 6B e 6C concluídos na camada contábil, com fechamento mensal, fechamento anual, continuidade patrimonial e auditoria localizada. V7 validada e suíte de 133 testes aprovada após correção da fixture de abertura.
 
 Fontes: planejamento de 22/11; relatórios do Codex e logs PostgreSQL/Maven/Git de 25/11 fornecidos pelo desenvolvedor. Este documento não substitui inspeção do código vigente.

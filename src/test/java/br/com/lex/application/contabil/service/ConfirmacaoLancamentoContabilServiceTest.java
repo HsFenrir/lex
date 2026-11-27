@@ -58,6 +58,8 @@ import static org.junit.jupiter.api.Assertions.*;
 @Transactional
 class ConfirmacaoLancamentoContabilServiceTest {
 
+    @Autowired private FechamentoContabilService fechamento;
+
     private static final BigDecimal VALOR = new BigDecimal("100.00");
 
     @Autowired
@@ -118,8 +120,13 @@ class ConfirmacaoLancamentoContabilServiceTest {
 
         assertEquals(1L, confirmar(original, criarBalanceado(original, VALOR)).getNumero());
         assertEquals(1L, confirmar(outraEmpresa, criarBalanceado(outraEmpresa, VALOR)).getNumero());
-        assertEquals(1L, confirmar(outroExercicio, criarBalanceado(outroExercicio, VALOR)).getNumero());
         assertEquals(2L, confirmar(original, criarBalanceado(original, VALOR)).getNumero());
+        periodos.saveAndFlush(new PeriodoContabil(exercicios.getReferenceById(original.exercicioId()),
+                (short) 12, LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 31)));
+        fechamento.encerrarPeriodo(original.empresaId(), original.usuarioId(), original.exercicioId(), original.periodoId());
+        fechamento.encerrarExercicio(original.empresaId(), original.usuarioId(), original.exercicioId());
+        assertEquals(1L, confirmar(outroExercicio, criarBalanceado(outroExercicio, VALOR)).getNumero());
+        assertEquals(2L, ultimoNumero(original));
         assertEquals(1L, ultimoNumero(outraEmpresa));
         assertEquals(1L, ultimoNumero(outroExercicio));
     }

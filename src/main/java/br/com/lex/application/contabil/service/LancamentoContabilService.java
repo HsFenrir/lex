@@ -93,7 +93,7 @@ public class LancamentoContabilService {
         ExercicioContabil exercicio = buscarExercicio(empresaId, exercicioId);
         PeriodoContabil periodo = buscarPeriodo(empresaId, exercicioId, periodoId);
 
-        validarCalendario(exercicio, periodo, data);
+        bloquearEValidarDestino(exercicio, periodo, empresa, usuario, data);
 
         PlanoContas plano = planoContasRepository.findByEmpresaId(empresaId)
                 .orElseThrow(() -> new IllegalStateException("A empresa não possui plano de contas."));
@@ -111,7 +111,7 @@ public class LancamentoContabilService {
         Empresa empresa = buscarEmpresaAutorizada(abertura.empresaId(), abertura.usuarioId());
         ExercicioContabil exercicio = buscarExercicio(empresa.getId(), abertura.exercicioId());
         PeriodoContabil periodo = buscarPeriodo(empresa.getId(), exercicio.getId(), abertura.periodoId());
-        validarCalendario(exercicio, periodo, abertura.data());
+        bloquearEValidarDestino(exercicio, periodo, empresa, usuario, abertura.data());
         if (abertura.saldos().size() < 2) {
             throw new IllegalArgumentException("Informe pelo menos duas contas com saldo.");
         }
@@ -154,6 +154,24 @@ public class LancamentoContabilService {
                 .orElseThrow(() -> new IllegalArgumentException("Conta não encontrada no plano do lançamento."));
     }
 
+    LancamentoContabil escriturarTecnico(Empresa empresa, Usuario usuario, ExercicioContabil exercicio,
+                                         PeriodoContabil periodo, LocalDate data, String historico,
+                                         OrigemLancamento origem, List<AberturaContabil.SaldoPorConta> saldos) {
+        PlanoContas plano = planoContasRepository.findByEmpresaId(empresa.getId())
+                .orElseThrow(() -> new IllegalStateException("A empresa não possui plano de contas."));
+        LancamentoContabil lancamento = lancamentoRepository.save(
+                new LancamentoContabil(empresa, exercicio, periodo, plano, usuario, data, historico, origem));
+        for (AberturaContabil.SaldoPorConta saldo : saldos) {
+            ContaContabil conta = buscarContaDoLancamento(lancamento, saldo.contaId());
+            partidaRepository.save(new PartidaContabil(lancamento, conta, saldo.tipo(), saldo.valor(), null));
+        }
+        partidaRepository.flush();
+        validarCalendario(exercicio, periodo, data);
+        validarPartidasParaConfirmacao(lancamento, buscarPartidas(lancamento));
+        registrarConfirmacao(lancamento, usuario);
+        return lancamento;
+    }
+
     @Transactional
     public void removerPartida(UUID empresaId, UUID usuarioId, UUID lancamentoId, UUID partidaId) {
         LancamentoContabil lancamento = bloquearRascunhoAutorizado(empresaId, usuarioId, lancamentoId);
@@ -170,6 +188,9 @@ public class LancamentoContabilService {
         validarRascunho(lancamento, "O lançamento deve estar em rascunho.");
         if (lancamento.getOrigem() == OrigemLancamento.ESTORNO) {
             throw new IllegalStateException("A confirmação de estorno exige o tratamento do lançamento original.");
+        }
+        if (lancamento.getOrigem() == OrigemLancamento.ENCERRAMENTO) {
+            throw new IllegalStateException("A confirmação técnica deve ocorrer no fechamento anual.");
         }
 
         validarConfirmacao(lancamento, empresa, usuario);
@@ -271,8 +292,15 @@ public class LancamentoContabilService {
 
     private void validarOrigemEstornavel(LancamentoContabil original) {
         switch (original.getOrigem()) {
-            case MANUAL, ABERTURA -> { }
+            case MANUAL -> { }
+            case ABERTURA -> {
+                ExercicioContabil exercicio = buscarExercicio(original.getEmpresaId(), original.getExercicioId());
+                if (exercicio.getExercicioOrigemId() != null) {
+                    throw new IllegalStateException("A abertura automatizada não pode ser estornada pelo fluxo genérico.");
+                }
+            }
             case ESTORNO -> throw new IllegalStateException("Um lançamento de estorno não pode ser estornado.");
+            case ENCERRAMENTO -> throw new IllegalStateException("Um lançamento de encerramento não pode ser estornado.");
             default -> throw new IllegalStateException("O lançamento exige reversão pelo módulo de origem.");
         }
     }
@@ -309,10 +337,19 @@ public class LancamentoContabilService {
         bloquearEValidarDestino(exercicio, periodo, empresa, usuario, lancamento.getData());
         if (lancamento.getOrigem() == OrigemLancamento.ABERTURA) {
             validarPoliticaAbertura(empresa.getId(), exercicio);
+        } else {
+            validarContinuidade(empresa.getId(), exercicio);
         }
         List<DadosPartida> partidas = buscarPartidas(lancamento);
         validarPartidasParaConfirmacao(lancamento, partidas);
         return partidas;
+    }
+
+    void validarContinuidade(UUID empresaId, ExercicioContabil exercicio) {
+        if (exercicio.getExercicioOrigemId() == null
+                && exercicioRepository.existsByEmpresaIdAndAnoLessThan(empresaId, exercicio.getAno())) {
+            throw new IllegalStateException("Conclua o fechamento e a continuidade do exercício anterior antes de confirmar.");
+        }
     }
 
     private void bloquearEValidarDestino(
@@ -456,6 +493,9 @@ public class LancamentoContabilService {
         validarRascunho(lancamento, "Somente lançamentos em rascunho podem ter partidas alteradas.");
         if (lancamento.getOrigem() == OrigemLancamento.ESTORNO) {
             throw new IllegalStateException("As partidas de um estorno são geradas automaticamente.");
+        }
+        if (lancamento.getOrigem() == OrigemLancamento.ENCERRAMENTO) {
+            throw new IllegalStateException("As partidas do encerramento são geradas automaticamente.");
         }
         return lancamento;
     }

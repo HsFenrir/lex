@@ -58,10 +58,17 @@ public interface LancamentoContabilRepository
             UUID empresaId, UUID exercicioId, Collection<StatusLancamento> status
     );
 
+    boolean existsByEmpresaIdAndExercicioIdAndStatus(UUID empresaId, UUID exercicioId, StatusLancamento status);
+
+    boolean existsByEmpresaIdAndExercicioIdAndPeriodoIdAndStatus(
+            UUID empresaId, UUID exercicioId, UUID periodoId, StatusLancamento status
+    );
+
     @Query("""
             select min(l.data) from LancamentoContabil l
             where l.empresaId = :empresaId and l.exercicioId = :exercicioId
               and l.origem = br.com.lex.domain.contabil.enums.OrigemLancamento.ABERTURA
+              and l.exercicio.exercicioOrigemId is null
               and l.status in (br.com.lex.domain.contabil.enums.StatusLancamento.CONFIRMADO,
                                br.com.lex.domain.contabil.enums.StatusLancamento.ESTORNADO)
             """)

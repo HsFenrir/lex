@@ -37,6 +37,9 @@ public class ExercicioContabil {
     @Column(name = "status", nullable = false, length = 12)
     private StatusExercicio status = StatusExercicio.ABERTO;
 
+    @Column(name = "exercicio_origem_id")
+    private UUID exercicioOrigemId;
+
     @Column(
             name = "criado_em",
             nullable = false,
@@ -55,5 +58,21 @@ public class ExercicioContabil {
         this.ano = ano;
         this.dataInicio = dataInicio;
         this.dataFim = dataFim;
+    }
+
+    public void receberContinuidadeDe(ExercicioContabil origem) {
+        if (exercicioOrigemId != null || status != StatusExercicio.ABERTO
+                || origem.getStatus() != StatusExercicio.ABERTO || ano != origem.getAno() + 1
+                || !empresa.getId().equals(origem.getEmpresa().getId())) {
+            throw new IllegalStateException("Exercícios incompatíveis para a continuidade patrimonial.");
+        }
+        exercicioOrigemId = origem.getId();
+    }
+
+    public void encerrar() {
+        if (status != StatusExercicio.ABERTO) {
+            throw new IllegalStateException("O exercício deve estar aberto.");
+        }
+        status = StatusExercicio.ENCERRADO;
     }
 }

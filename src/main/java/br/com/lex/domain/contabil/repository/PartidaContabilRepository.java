@@ -114,6 +114,8 @@ public interface PartidaContabilRepository
             from PartidaContabil p join p.lancamento l
             join p.contaContabil c left join l.estornoDe original
             """ + FILTRO_ESCRITURACAO + """
+              and l.origem <> br.com.lex.domain.contabil.enums.OrigemLancamento.ENCERRAMENTO
+              and (original.origem is null or original.origem <> br.com.lex.domain.contabil.enums.OrigemLancamento.ENCERRAMENTO)
               and c.grupo in (br.com.lex.domain.contabil.enums.GrupoConta.RECEITA,
                               br.com.lex.domain.contabil.enums.GrupoConta.CUSTO,
                               br.com.lex.domain.contabil.enums.GrupoConta.DESPESA)

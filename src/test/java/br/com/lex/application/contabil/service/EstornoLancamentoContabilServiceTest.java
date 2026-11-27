@@ -59,6 +59,8 @@ import static org.junit.jupiter.api.Assertions.*;
 @Transactional
 class EstornoLancamentoContabilServiceTest {
 
+    @Autowired private FechamentoContabilService fechamento;
+
     private static final LocalDate DATA = LocalDate.of(2026, 1, 15);
 
     @Autowired private LancamentoContabilService service;
@@ -192,21 +194,22 @@ class EstornoLancamentoContabilServiceTest {
         String cabecalho = cabecalhoSemStatus(original);
         String linhas = partidasOriginaisJson(original);
         Destino futuro = criarDestino(dados.empresa(), 2027);
-        entityManager.flush();
-        jdbc.update("UPDATE periodo_contabil SET status = 'ENCERRADO' WHERE id = ?", dados.destino().periodo());
-        jdbc.update("UPDATE exercicio_contabil SET status = 'ENCERRADO' WHERE id = ?", dados.destino().exercicio());
+        periodos.saveAndFlush(new PeriodoContabil(exercicios.getReferenceById(dados.destino().exercicio()),
+                (short) 12, LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 31)));
+        fechamento.encerrarPeriodo(dados.empresa(), dados.usuario(), dados.destino().exercicio(), dados.destino().periodo());
+        fechamento.encerrarExercicio(dados.empresa(), dados.usuario(), dados.destino().exercicio());
         UUID estorno = criarEstorno(dados, original, futuro, DATA.plusYears(1));
         confirmarEstorno(dados, estorno);
         entityManager.clear();
 
         LancamentoContabil confirmado = carregar(estorno);
         assertEquals(StatusLancamento.CONFIRMADO, confirmado.getStatus());
-        assertEquals(1L, confirmado.getNumero());
+        assertEquals(2L, confirmado.getNumero());
         assertEquals(futuro.exercicio(), confirmado.getExercicioId());
         assertEquals(dados.usuario(), confirmado.getConfirmadoPor().getId());
         assertNotNull(confirmado.getConfirmadoEm());
         assertEquals(1L, ultimoNumero(dados, dados.destino()));
-        assertEquals(1L, ultimoNumero(dados, futuro));
+        assertEquals(2L, ultimoNumero(dados, futuro));
         assertEquals(StatusLancamento.ESTORNADO, carregar(original).getStatus());
         assertEquals(cabecalho, cabecalhoSemStatus(original));
         assertEquals(linhas, partidasOriginaisJson(original));

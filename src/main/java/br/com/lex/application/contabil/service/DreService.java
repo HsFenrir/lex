@@ -90,7 +90,6 @@ public class DreService {
         BigDecimal periodo = saldo.totalCreditos().subtract(saldo.totalDebitos());
         BigDecimal acumulado = saldo.saldoFinal().valor().negate();
 
-        // Classificar também a origem do original permite excluir o encerramento e seus estornos quando houver essa origem.
         OrigemLancamento origem = movimento.getOrigem();
         OrigemLancamento origemEfetiva = origem == OrigemLancamento.ESTORNO ? movimento.getOrigemOriginal() : origem;
         return switch (origemEfetiva) {
@@ -98,6 +97,7 @@ public class DreService {
                     ? new Valores(ZERO, ZERO, periodo, acumulado)
                     : new Valores(ZERO, periodo, ZERO, acumulado);
             case MANUAL, ESTOQUE, ATIVO, DEPRECIACAO, ESTORNO -> new Valores(periodo, ZERO, ZERO, acumulado);
+            case ENCERRAMENTO -> ZERADO;
         };
     }
 

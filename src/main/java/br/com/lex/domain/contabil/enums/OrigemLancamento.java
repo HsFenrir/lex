@@ -7,6 +7,7 @@ public enum OrigemLancamento {
     ATIVO,
     DEPRECIACAO,
     ESTORNO,
-    ABERTURA
+    ABERTURA,
+    ENCERRAMENTO
 
 }

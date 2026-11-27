@@ -109,6 +109,13 @@ public class PeriodoContabil {
         this.dataFim = dataFim;
     }
 
+    public void encerrar() {
+        if (status != StatusPeriodo.ABERTO) {
+            throw new IllegalStateException("O período deve estar aberto.");
+        }
+        status = StatusPeriodo.ENCERRADO;
+    }
+
     @PrePersist
     private void sincronizarChavesCompostas() {
         this.exercicioId = exercicio.getId();

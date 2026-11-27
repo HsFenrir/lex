@@ -8,6 +8,7 @@ import br.com.lex.application.contabil.dto.LivroRazao;
 import br.com.lex.domain.contabil.entity.ContaContabil;
 import br.com.lex.domain.contabil.entity.Empresa;
 import br.com.lex.domain.contabil.entity.ExercicioContabil;
+import br.com.lex.domain.contabil.entity.LancamentoContabil;
 import br.com.lex.domain.contabil.entity.ModeloContaContabil;
 import br.com.lex.domain.contabil.entity.PeriodoContabil;
 import br.com.lex.domain.contabil.entity.PlanoContas;
@@ -52,6 +53,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @SpringBootTest
 @ActiveProfiles("test")
 class AberturaContabilServiceTest {
+
+    @Autowired private FechamentoContabilService fechamento;
 
     private static final LocalDate DATA = LocalDate.of(2026, 5, 15);
     private static final BigDecimal VALOR = new BigDecimal("120.45");
@@ -288,13 +291,30 @@ class AberturaContabilServiceTest {
             executar(schema, () -> {
                 conferirRascunho(anterior);
                 conferirPersistencia(dados, 3, 6, 2L);
+                // Descarta somente o rascunho da fixture após verificar que a rejeição o preservou.
+                List<UUID> partidasDoRascunho = em.createQuery("""
+                        select p.id from PartidaContabil p where p.lancamentoId = :lancamento
+                        """, UUID.class).setParameter("lancamento", anterior).getResultList();
+                for (UUID partidaId : partidasDoRascunho) {
+                    lancamentos.removerPartida(dados.empresa(), dados.usuario(), anterior, partidaId);
+                }
+                em.flush();
+                em.remove(em.find(LancamentoContabil.class, anterior));
+                em.flush();
+
                 assertThat(confirmarManual(dados, criarManual(dados, DATA.plusDays(2)))).isEqualTo(3L);
 
                 Cenario outra = criarCenario();
                 assertThat(confirmarManual(outra, criarManual(outra, DATA.minusDays(1)))).isEqualTo(1L);
                 Cenario seguinte = criarExercicioSeguinte(dados);
+                LocalDate fim = dados.data().withMonth(12).withDayOfMonth(31);
+                em.persist(new PeriodoContabil(em.getReference(ExercicioContabil.class, dados.exercicio()),
+                        (short) 12, fim.withDayOfMonth(1), fim));
+                em.flush();
+                fechamento.encerrarPeriodo(dados.empresa(), dados.usuario(), dados.exercicio(), dados.periodo());
+                fechamento.encerrarExercicio(dados.empresa(), dados.usuario(), dados.exercicio());
                 assertThat(confirmarManual(seguinte, criarManual(seguinte, seguinte.data().minusDays(1))))
-                        .isEqualTo(1L);
+                        .isEqualTo(2L);
                 return null;
             });
         });

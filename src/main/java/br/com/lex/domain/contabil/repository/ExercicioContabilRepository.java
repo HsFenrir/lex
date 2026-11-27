@@ -11,6 +11,8 @@ public interface ExercicioContabilRepository
 
     boolean existsByEmpresaIdAndAnoLessThan(UUID empresaId, Short ano);
 
+    Optional<ExercicioContabil> findByEmpresaIdAndAno(UUID empresaId, Short ano);
+
     Optional<ExercicioContabil> findByIdAndEmpresaId(
             UUID id,
             UUID empresaId
