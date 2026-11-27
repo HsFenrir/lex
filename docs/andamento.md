@@ -1,11 +1,11 @@
 # LEX — Andamento e passagem de contexto
 
-Atualização em 26/11/2026, após a conclusão dos incrementos 6A, 6B e 6C na camada contábil. Apresentação em 30/11/2026.
+Atualização em 27/11/2026, após a regressão do checkpoint contábil e a consolidação do planejamento web e da colaboração frontend. Apresentação em 30/11/2026.
 
 ## 1. Base verificada
 
 - Branch main sincronizada com origin/main e origin/HEAD segundo o log de push fornecido pelo desenvolvedor.
-- Incremento 4C publicado em `677d725`. Incremento 5A publicado em `d82f341` (`feat: implement trial balance and hierarchical account aggregation`), com seis arquivos, 512 inserções e nove exclusões. Incremento 5B publicado em `37d2da4`. Incremento 4D publicado em `bba714b`, checkpoint de base do incremento 6, que está apto para commit.
+- Incremento 4C publicado em `677d725`. Incremento 5A publicado em `d82f341` (`feat: implement trial balance and hierarchical account aggregation`), com seis arquivos, 512 inserções e nove exclusões. Incremento 5B publicado em `37d2da4`. Incremento 4D publicado em `bba714b`. Os incrementos 6A a 6C foram publicados em `597f34e`, último checkpoint de código validado. O 6D entregou o planejamento da integração web.
 - As metas de 25/11 foram integralmente concluídas. Os serviços de Livro Diário e Livro Razão foram antecipados em relação às atividades previstas para 26/11.
 - AGENTS.md e documentação inicial publicados em 9d41a94. Incremento 1 publicado em 54a4b39, script de testes em 9fbd7d1, escopo acadêmico confirmado em 1bf3fbc e incremento 2 publicado em 47cf2a8.
 - Java 21.0.10, Maven Wrapper (Maven 3.10.1 relatado pelo Codex), Spring Boot 4.1.2, Hibernate ORM 7.4.13.Final, PostgreSQL 18.4, conforme relatórios/logs locais. Conferir pom.xml antes de mudanças.
@@ -21,7 +21,9 @@ No 4D, o desenvolvedor executou `.\scripts\test.ps1` em 26/11/2026, com término
 
 Após a correção da fixture de abertura, o desenvolvedor executou `.\scripts\test.ps1` em 26/11/2026. A execução terminou às 23:44:27 (UTC−03:00), em 01:31 min, com `BUILD SUCCESS`. Os 15 relatórios Surefire correspondem às fontes atuais e confirmam **133 testes, zero falhas, zero erros e zero ignorados**. `FechamentoContabilServiceTest` aprovou 12 de 12 casos e `AberturaContabilServiceTest`, 13 de 13. Os 121 casos anteriores foram preservados. As classes e a cópia da V7 no diretório de compilação são posteriores às fontes e anteriores aos relatórios.
 
-A suíte usou o perfil `test` no PostgreSQL 18.4 em `jdbc:postgresql://127.0.0.1:5432/lex_test`. Foram validadas sete migrations, com o schema `public` na V7 e 28 schemas descartáveis. A execução anterior aplicou a V7 sobre o `public` que estava na V6. A suíte cobre também o upgrade com exercício legado em schema descartável e a instalação desde a V1. Os testes aguardam o encerramento das threads com timeout e removem os schemas em `finally`. O script exige a role `lex_test_runner` e a ausência de privilégio `CONNECT` em `lex_dev` antes de iniciar o Maven.
+Nova regressão do checkpoint `597f34e`, executada pelo desenvolvedor com `.\scripts\test.ps1`, terminou em 27/11/2026 às 00:07:27 (UTC−03:00), em 01:13 min, com `BUILD SUCCESS`. A conferência dos 15 relatórios Surefire confirmou **133 testes, zero falhas, zero erros e zero ignorados**. A última execução usou PostgreSQL 18.4 e schema de testes V7.
+
+A suíte do incremento 6 usou o perfil `test` no PostgreSQL 18.4 em `jdbc:postgresql://127.0.0.1:5432/lex_test`. Foram validadas sete migrations, com o schema `public` na V7 e 28 schemas descartáveis. A execução anterior aplicou a V7 sobre o `public` que estava na V6. A suíte cobre também o upgrade com exercício legado em schema descartável e a instalação desde a V1. Os testes aguardam o encerramento das threads com timeout e removem os schemas em `finally`. O script exige a role `lex_test_runner` e a ausência de privilégio `CONNECT` em `lex_dev` antes de iniciar o Maven.
 
 | Classe | Testes aprovados |
 |---|---:|
@@ -64,7 +66,7 @@ Na validação do incremento 1, em 25/11 às 01:46:32 (UTC−03:00), `.\mvnw.cmd
 | Balancete de Verificação | Incremento 5A publicado. Apuração por conta e agregação pela hierarquia do plano. |
 | Balanço Patrimonial e DRE | Incremento 5B validado. Emissão por data-base e intervalo, respectivamente. |
 | Fechamento e continuidade | Incrementos 6A, 6B e 6C validados na camada contábil. Integração com os módulos operacionais pendente. |
-| API/frontend | Estado completo a inspecionar; integração essencial pendente. |
+| API/frontend | Spring MVC e Thymeleaf como dependências. Controllers, autenticação e telas pendentes. O 6D planejou 36 rotas HTTP, com 16 serviços disponíveis e 20 operações dependentes de implementação adicional. |
 
 ### Arquivos e contratos do incremento 1
 
@@ -214,11 +216,17 @@ O script verifica variáveis e arquivos locais que podem sobrescrever a execuç�
 
 O modo padrão do script foi validado nas suítes de 68, 87, 92, 97, 105, 110, 116, 121 e 133 testes. Para JUnit no IntelliJ, use `TEST_DB_*` nas configurações locais All in lex e LexApplicationTests. A atualização dessas configurações ainda não foi confirmada. Uma IDE já aberta não herda variáveis de um novo terminal.
 
-## 5. Próxima etapa — 27/11/2026
+## 5. Próxima etapa e colaboração — 27/11/2026
 
 As metas contábeis de 26/11/2026 foram concluídas. Em 27/11/2026, a próxima etapa é estoque PEPS, controle de ativos e depreciação linear, com contabilização integrada. Para retomar em nova sessão, usar os contratos da seção 3 e a suíte validada da seção 2 como base. A integração operacional deve reutilizar o núcleo de confirmação, incluindo o limite de migração e o bloqueio por calendário.
 
 **Regra da escrituração efetiva.** Lançamentos `CONFIRMADOS`, inclusive os estornos confirmados, e lançamentos originais `ESTORNADOS` integram a escrituração. Cada um produz efeitos na sua própria data contábil, respeitado o corte do relatório. Lançamentos em `RASCUNHO` ficam fora dos saldos. O original e seu estorno podem produzir efeitos em períodos diferentes.
+
+O 6D documentou a proposta de Thymeleaf, HTML5, CSS3 e JavaScript, com Spring MVC, API REST, sessão no servidor e uma mesma origem HTTPS em um único JAR. A arquitetura ainda será alinhada com o colaborador frontend. Os contratos HTTP são preliminares. [Integração web](integracao-web.md).
+
+A divisão de trabalho proposta permite desenvolver interface e backend em branches próprias, com contratos compartilhados, fixtures fictícias identificadas, revisão de diffs e integração controlada na `main`. [Guia frontend](guia-frontend.md).
+
+O manual PDF acadêmico 1.0, de outubro de 2026, é a referência normativa da identidade visual. O PNG principal corresponde à imagem raster da página 3. Tokens e componentes adicionais são propostas técnicas. Matriz vetorial, transparência, versões finais monocromática e negativa e favicon continuam pendentes. [Manual oficial](Manual_Identidade_Visual_LEX.pdf) · [Identidade visual para web](identidade-visual.md).
 
 ## 6. Backlog e riscos
 
@@ -232,7 +240,7 @@ As metas contábeis de 26/11/2026 foram concluídas. Em 27/11/2026, a próxima e
 - A continuidade patrimonial deve distinguir a abertura manual de migração da abertura automatizada de exercícios subsequentes, evitando duplicidade entre o transporte e os lançamentos de abertura.
 - P0: entregar link e manual. O enunciado confirma Diário, Razão, Balance (Balancete no planejamento), BP, DRE e os módulos de estoque, ativos e depreciação. Ver [requisitos-academicos.md](requisitos-academicos.md) para orientações de aula, PDFs e a ressalva do modelo de DRE.
 - A exportação em PDF deverá contemplar o Livro Razão integral, além da emissão individual por conta disponível no serviço atual.
-- O projeto adotará um modelo próprio de DRE, conforme a decisão já registrada. A implementação pode avançar enquanto permanece a ressalva acadêmica sobre a disponibilidade do modelo do professor e eventuais diferenças de formato. [Requisitos acadêmicos](requisitos-academicos.md#4-enunciado-orientações-de-aula-e-decisões-complementares).
+- O projeto adotará um modelo próprio de DRE, conforme a decisão já registrada. A implementação pode avançar enquanto permanece a ressalva acadêmica sobre a disponibilidade do modelo do professor e eventuais diferenças de formato. [Requisitos acadêmicos](requisitos-academicos.md).
 - P1: integrar autenticação e utilização efetiva da auditoria, conectar o estorno às reversões operacionais e ampliar a cobertura de isolamento para os próximos fluxos. Avaliar proteção adicional contra destino errado antes do contexto Spring.
 - P1: um contador legado defasado pode colidir com número já utilizado. A restrição de unicidade rejeita a confirmação e a transação reverte a alocação. A reconciliação de dados legados permanece pendente caso a divergência seja encontrada.
 - P1 segurança: fallbacks antigos de credenciais foram removidos, mas valores anteriores podem persistir no histórico Git. Classificar e rotacionar se reais; remoção do arquivo atual não elimina exposição histórica. Não reescrever histórico sem aprovação.
@@ -252,5 +260,7 @@ As metas contábeis de 26/11/2026 foram concluídas. Em 27/11/2026, a próxima e
 - 26/11: incremento 5B concluído, com Balanço Patrimonial e DRE. Suíte de 116 testes aprovada.
 - 26/11: incremento 4D concluído, com proteção temporal da abertura e teste direto da concorrência com confirmação manual. Suíte de 121 testes aprovada.
 - 26/11: incrementos 6A, 6B e 6C concluídos na camada contábil, com fechamento mensal, fechamento anual, continuidade patrimonial e auditoria localizada. V7 validada e suíte de 133 testes aprovada após correção da fixture de abertura.
+
+- 27/11: regressão de 133 testes no checkpoint `597f34e` e consolidação documental do 6D, da identidade visual oficial e das orientações de colaboração frontend.
 
 Fontes: planejamento de 22/11; relatórios do Codex e logs PostgreSQL/Maven/Git de 25/11 fornecidos pelo desenvolvedor. Este documento não substitui inspeção do código vigente.
