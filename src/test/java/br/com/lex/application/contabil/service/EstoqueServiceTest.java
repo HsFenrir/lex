@@ -477,7 +477,10 @@ class EstoqueServiceTest {
             assertThatThrownBy(() -> executar(schema, () -> estoque.registrarVenda(venda)))
                     .hasMessageContaining("continuidade do exercício anterior");
             executar(schema, () -> fechamento.encerrarPeriodo(c.empresa(), c.usuario(), c.exercicio(), c.periodo()));
-            var encerramento = executar(schema, () -> fechamento.encerrarExercicio(c.empresa(), c.usuario(), c.exercicio()));
+            var encerramento = executar(schema, () -> {
+                CalendarioTestFixture.preencherEncerradosAteNovembro(jdbc, c.exercicio(), DATA.getMonthValue() + 1);
+                return fechamento.encerrarExercicio(c.empresa(), c.usuario(), c.exercicio());
+            });
             assertThat(encerramento.exercicioDestinoId()).isEqualTo(venda.exercicioId());
             assertThat(encerramento.lancamentoAberturaId()).isNotNull();
             var confirmada = executar(schema, () -> estoque.registrarVenda(venda));

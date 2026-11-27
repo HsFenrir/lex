@@ -16,6 +16,7 @@ import br.com.lex.domain.contabil.enums.StatusPeriodo;
 import br.com.lex.domain.contabil.enums.TipoConta;
 import br.com.lex.domain.contabil.enums.TipoPartida;
 import br.com.lex.domain.contabil.repository.ContaContabilRepository;
+import br.com.lex.domain.contabil.repository.ApropriacaoDepreciacaoRepository;
 import br.com.lex.domain.contabil.repository.ExercicioContabilRepository;
 import br.com.lex.domain.contabil.repository.LancamentoContabilRepository;
 import br.com.lex.domain.contabil.repository.PeriodoContabilRepository;
@@ -54,6 +55,7 @@ public class FechamentoContabilService {
     private final ContaContabilRepository contas;
     private final BalanceteService balancete;
     private final LancamentoContabilService escrituracao;
+    private final ApropriacaoDepreciacaoRepository depreciacoes;
     private final EntityManager em;
     private final JdbcTemplate jdbc;
 
@@ -74,14 +76,14 @@ public class FechamentoContabilService {
         if (periodo.getMes() == 12) {
             throw new IllegalStateException("Dezembro é reservado para o encerramento anual.");
         }
-        if (periodos.existsByEmpresaIdAndExercicioIdAndMesLessThanAndStatus(
-                empresaId, exercicioId, periodo.getMes(), StatusPeriodo.ABERTO)) {
-            throw new IllegalStateException("Encerre primeiro os períodos anteriores cadastrados.");
-        }
+        escrituracao.validarContinuidade(empresaId, contexto.exercicio());
+        validarCalendarioAte(empresaId, exercicioId, periodo.getMes(),
+                "Encerre primeiro os períodos anteriores cadastrados.");
         if (lancamentos.existsByEmpresaIdAndExercicioIdAndPeriodoIdAndStatus(
                 empresaId, exercicioId, periodoId, StatusLancamento.RASCUNHO)) {
             throw new IllegalStateException("O período possui lançamentos em rascunho.");
         }
+        validarDepreciacao(empresaId, periodo.getDataFim());
         validarEquilibrio(balancete.emitir(empresaId, usuarioId, exercicioId, periodo.getDataInicio(), periodo.getDataFim()));
         periodo.encerrar();
         em.flush();
@@ -101,12 +103,16 @@ public class FechamentoContabilService {
             throw new IllegalStateException("O próximo exercício está fora do calendário suportado.");
         }
 
+        // Use a mesma serialização do cadastro antes de descobrir ou bloquear o sucessor.
+        jdbc.queryForObject("select bloquear_e_validar_exercicios(?, true)", Integer.class, empresaId);
         List<PeriodoContabil> calendarioOrigem = bloquearPeriodos(empresaId, exercicioId);
         PeriodoContabil dezembro = calendarioOrigem.stream().filter(p -> p.getMes() == 12).findFirst()
                 .orElseThrow(() -> new IllegalStateException("Cadastre dezembro antes do encerramento anual."));
         short anoDestino = (short) (origem.getAno() + 1);
         ExercicioContabil destino = exercicios.findByEmpresaIdAndAno(empresaId, anoDestino).orElse(null);
-        List<PeriodoContabil> calendarioDestino = destino == null ? List.of() : bloquearPeriodos(empresaId, destino.getId());
+        if (destino != null) {
+            bloquearPeriodos(empresaId, destino.getId());
+        }
 
         em.refresh(origem, LockModeType.PESSIMISTIC_WRITE);
         if (destino != null) {
@@ -114,10 +120,11 @@ public class FechamentoContabilService {
         }
         validarAberto(origem);
         escrituracao.validarContinuidade(empresaId, origem);
-        if (dezembro.getStatus() != StatusPeriodo.ABERTO || calendarioOrigem.stream()
-                .anyMatch(p -> p.getMes() < 12 && p.getStatus() != StatusPeriodo.ENCERRADO)) {
+        if (dezembro.getStatus() != StatusPeriodo.ABERTO) {
             throw new IllegalStateException("Encerre os períodos anteriores cadastrados e mantenha dezembro aberto.");
         }
+        validarCalendarioAte(empresaId, exercicioId, dezembro.getMes(),
+                "Encerre os períodos anteriores cadastrados e mantenha dezembro aberto.");
         if (lancamentos.existsByEmpresaIdAndExercicioIdAndStatus(empresaId, exercicioId, StatusLancamento.RASCUNHO)) {
             throw new IllegalStateException("O exercício possui lançamentos em rascunho.");
         }
@@ -125,8 +132,11 @@ public class FechamentoContabilService {
                 OrigemLancamento.ENCERRAMENTO, Set.of(StatusLancamento.values()))) {
             throw new IllegalStateException("O exercício já possui lançamento de encerramento.");
         }
+        List<PeriodoContabil> calendarioDestino = destino == null ? List.of()
+                : periodos.findAllByEmpresaIdAndExercicioIdOrderByMes(empresaId, destino.getId());
         validarDestino(empresaId, destino, calendarioDestino);
         Usuario usuario = bloquearAutorizacao(contexto.empresa(), usuarioId);
+        validarDepreciacao(empresaId, dezembro.getDataFim());
         Balancete apurado = balancete.emitir(empresaId, usuarioId, exercicioId, origem.getDataInicio(), origem.getDataFim());
         validarEquilibrio(apurado);
         PartidasTecnicas tecnicas = prepararPartidas(empresaId, apurado);
@@ -152,6 +162,29 @@ public class FechamentoContabilService {
         auditar(empresaId, usuarioId, "EXERCICIO_CONTABIL", proximo.getId(), "TRANSPORTAR_SALDOS",
                 origem.getId(), proximo.getDataInicio(), proximo.getId(), aberturaId);
         return new ExercicioEncerrado(origem.getId(), proximo.getId(), encerramentoId, aberturaId, tecnicas.resultado());
+    }
+
+    private void validarDepreciacao(UUID empresaId, LocalDate dataFinal) {
+        // As operações patrimoniais bloqueiam o calendário antes de alterar o ativo ou apropriar a competência.
+        List<String> pendencias = depreciacoes.buscarPendenciasAte(empresaId, dataFinal);
+        if (!pendencias.isEmpty()) {
+            throw new IllegalStateException("Depreciação pendente por ativo e competência: " + String.join(", ", pendencias));
+        }
+    }
+
+    private void validarCalendarioAte(UUID empresaId, UUID exercicioId, short mesAlvo, String erroAberto) {
+        int inicio = jdbc.queryForObject("select primeiro_mes_escrituracao(?)", Integer.class, exercicioId);
+        var calendario = periodos.findAllByEmpresaIdAndExercicioIdOrderByMes(empresaId, exercicioId).stream()
+                .collect(Collectors.toMap(PeriodoContabil::getMes, PeriodoContabil::getStatus));
+        for (short mes = (short) inicio; mes < mesAlvo; mes++) {
+            StatusPeriodo estado = calendario.get(mes);
+            if (estado == null) {
+                throw new IllegalStateException("O calendário possui lacuna na competência de mês " + mes + ".");
+            }
+            if (estado != StatusPeriodo.ENCERRADO) {
+                throw new IllegalStateException(erroAberto);
+            }
+        }
     }
 
     private void validarIsolamento() {

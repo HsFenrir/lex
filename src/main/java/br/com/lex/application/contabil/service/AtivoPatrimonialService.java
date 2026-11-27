@@ -2,6 +2,7 @@ package br.com.lex.application.contabil.service;
 
 import br.com.lex.application.contabil.dto.AberturaContabil.SaldoPorConta;
 import br.com.lex.application.contabil.dto.AquisicaoAtivo;
+import br.com.lex.application.contabil.dto.ApropriacaoDepreciacao;
 import br.com.lex.application.contabil.dto.FichaAtivo;
 import br.com.lex.domain.contabil.entity.AtivoPatrimonial;
 import br.com.lex.domain.contabil.entity.Empresa;
@@ -15,13 +16,19 @@ import br.com.lex.domain.contabil.enums.ClassificacaoDRE;
 import br.com.lex.domain.contabil.enums.GrupoConta;
 import br.com.lex.domain.contabil.enums.NaturezaConta;
 import br.com.lex.domain.contabil.enums.OrigemLancamento;
+import br.com.lex.domain.contabil.enums.StatusExercicio;
+import br.com.lex.domain.contabil.enums.StatusPeriodo;
 import br.com.lex.domain.contabil.enums.TipoConta;
 import br.com.lex.domain.contabil.enums.TipoPartida;
 import br.com.lex.domain.contabil.repository.AtivoPatrimonialRepository;
+import br.com.lex.domain.contabil.repository.ApropriacaoDepreciacaoRepository;
 import br.com.lex.domain.contabil.repository.ContaContabilRepository;
 import br.com.lex.domain.contabil.repository.ContaContabilRepository.ContaDoPlano;
+import br.com.lex.domain.contabil.repository.ExercicioContabilRepository;
+import br.com.lex.domain.contabil.repository.PeriodoContabilRepository;
 import br.com.lex.domain.contabil.repository.PlanoContasRepository;
 import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -29,11 +36,16 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
+
+import static java.util.stream.Collectors.groupingBy;
 
 @Service
 @RequiredArgsConstructor
@@ -46,8 +58,11 @@ public class AtivoPatrimonialService {
     private static final List<String> DESPESAS_DEPRECIACAO = List.of("6.1.005", "6.2.006");
 
     private final AtivoPatrimonialRepository ativos;
+    private final ApropriacaoDepreciacaoRepository apropriacoes;
     private final PlanoContasRepository planos;
     private final ContaContabilRepository contas;
+    private final ExercicioContabilRepository exercicios;
+    private final PeriodoContabilRepository periodos;
     private final LancamentoContabilService contabilidade;
     private final EntityManager em;
     private final JdbcTemplate jdbc;
@@ -57,26 +72,27 @@ public class AtivoPatrimonialService {
         if (aquisicao == null) {
             throw new IllegalArgumentException("Informe os dados da aquisição patrimonial.");
         }
-        if (!"read committed".equals(jdbc.queryForObject("show transaction_isolation", String.class))) {
-            throw new IllegalStateException("A aquisição patrimonial exige READ COMMITTED.");
-        }
+        validarIsolamento();
         UUID empresa = aquisicao.empresaId();
         UUID usuario = aquisicao.usuarioId();
         contabilidade.validarDestinoOperacional(empresa, usuario, aquisicao.exercicioId(), aquisicao.periodoId(),
                 aquisicao.dataAquisicao());
         BigDecimal custo = PartidaContabil.normalizarValor(aquisicao.custoAquisicao());
         BigDecimal residual = validarDadosPatrimoniais(aquisicao, custo);
+        validarCompetenciasDaDisponibilidade(empresa, aquisicao.dataAquisicao().getYear(), aquisicao.dataDisponibilidade(),
+                aquisicao.depreciavel() ? custo.subtract(residual) : BigDecimal.ZERO, aquisicao.vidaUtilMeses());
         String codigo = textoObrigatorio(Objects.toString(aquisicao.codigo(), "").toUpperCase(Locale.ROOT),
                 50, "Código patrimonial");
         String descricao = textoObrigatorio(aquisicao.descricao(), 200, "Descrição");
         UUID plano = planos.findByEmpresaId(empresa)
                 .orElseThrow(() -> new IllegalStateException("A empresa não possui plano de contas.")).getId();
         List<ContaDoPlano> estrutura = contas.buscarEstruturaDoPlano(empresa);
-        ContaDoPlano patrimonial = validarContaPatrimonial(aquisicao, estrutura);
+        ContaDoPlano patrimonial = validarContaPatrimonial(empresa, aquisicao.contaPatrimonialId(),
+                aquisicao.depreciavel(), estrutura);
         UUID redutora = aquisicao.depreciavel() ? resolverRedutora(estrutura, patrimonial.getId()) : null;
         validarReferencia(empresa, aquisicao.contrapartidaId(), CONTRAPARTIDAS, "Conta de contrapartida incompatível.");
         if (aquisicao.depreciavel()) {
-            validarDespesa(aquisicao, estrutura);
+            validarDespesa(empresa, aquisicao.contaDespesaId(), estrutura);
         }
 
         AtivoPatrimonial ativo = ativos.saveAndFlush(new AtivoPatrimonial(empresa, plano, usuario, codigo, descricao,
@@ -100,20 +116,124 @@ public class AtivoPatrimonialService {
         ativo.vincularAquisicao(lancamento);
         ativos.flush();
         auditar(ativo);
-        return ficha(ativo);
+        return ficha(ativo, List.of());
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public FichaAtivo registrarDisponibilidade(UUID empresaId, UUID usuarioId, UUID exercicioId, UUID periodoId,
+                                               UUID ativoId, LocalDate data) {
+        validarIsolamento();
+        contabilidade.validarDestinoOperacional(empresaId, usuarioId, exercicioId, periodoId, data);
+        AtivoPatrimonial ativo = buscarAtivo(empresaId, ativoId);
+        validarCompetenciasDaDisponibilidade(empresaId, data.getYear(), data, ativo.baseDepreciavel(),
+                ativo.getVidaUtilMeses());
+        em.refresh(ativo, LockModeType.PESSIMISTIC_WRITE);
+        if (!apropriacoes.listar(empresaId, ativoId).isEmpty()) {
+            throw new IllegalStateException("O ativo já possui competências de depreciação processadas.");
+        }
+        ativo.registrarDisponibilidade(data);
+        ativos.flush();
+        jdbc.update("""
+                insert into auditoria_evento
+                    (empresa_id, usuario_id, entidade, entidade_id, acao, dados_anteriores, dados_novos)
+                values (?, ?, 'ativo_patrimonial', ?, 'REGISTRAR_DISPONIBILIDADE',
+                    jsonb_build_object('dataDisponibilidade', null::date, 'situacao', 'AGUARDANDO_DISPONIBILIDADE'),
+                    jsonb_build_object('dataDisponibilidade', cast(? as date), 'situacao', 'DISPONIBILIDADE_REGISTRADA'))
+                """, empresaId, usuarioId, ativoId, data);
+        return ficha(ativo, List.of());
+    }
+
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public FichaAtivo consultar(UUID empresaId, UUID usuarioId, UUID ativoId) {
         contabilidade.validarAcessoOperacional(empresaId, usuarioId);
-        return ativos.findByIdAndEmpresaId(ativoId, empresaId).map(this::ficha)
+        AtivoPatrimonial ativo = buscarAtivo(empresaId, ativoId);
+        return ficha(ativo, apropriacoes.listar(empresaId, ativoId));
+    }
+
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    public List<FichaAtivo> listar(UUID empresaId, UUID usuarioId) {
+        contabilidade.validarAcessoOperacional(empresaId, usuarioId);
+        var historico = apropriacoes.listarDaEmpresa(empresaId).stream()
+                .collect(groupingBy(ApropriacaoDepreciacao::ativoId));
+        return ativos.findAllByEmpresaIdOrderByCodigoAsc(empresaId).stream()
+                .map(ativo -> ficha(ativo, historico.getOrDefault(ativo.getId(), List.of()))).toList();
+    }
+
+    AtivoPatrimonial bloquearAtivo(UUID empresaId, UUID ativoId) {
+        AtivoPatrimonial ativo = buscarAtivo(empresaId, ativoId);
+        em.refresh(ativo, LockModeType.PESSIMISTIC_WRITE);
+        return ativo;
+    }
+
+    private AtivoPatrimonial buscarAtivo(UUID empresaId, UUID ativoId) {
+        return ativos.findByIdAndEmpresaId(ativoId, empresaId)
                 .orElseThrow(() -> new IllegalArgumentException("Ativo patrimonial não encontrado na empresa."));
     }
 
-    @Transactional(readOnly = true)
-    public List<FichaAtivo> listar(UUID empresaId, UUID usuarioId) {
-        contabilidade.validarAcessoOperacional(empresaId, usuarioId);
-        return ativos.findAllByEmpresaIdOrderByCodigoAsc(empresaId).stream().map(this::ficha).toList();
+    void validarIsolamento() {
+        if (!"read committed".equals(jdbc.queryForObject("show transaction_isolation", String.class))) {
+            throw new IllegalStateException("A operação patrimonial exige READ COMMITTED.");
+        }
+    }
+
+    void bloquearEValidarContasDepreciacao(List<AtivoPatrimonial> bens) {
+        if (bens.isEmpty()) {
+            return;
+        }
+        var ids = new HashSet<UUID>();
+        for (AtivoPatrimonial ativo : bens) {
+            ids.add(ativo.getContaPatrimonialId());
+            ids.add(ativo.getContaRedutoraId());
+            ids.add(ativo.getContaDespesaId());
+        }
+        var primeiro = bens.getFirst();
+        if (contas.bloquearContasAptas(primeiro.getPlanoContasId(), ids).size() != ids.size()) {
+            throw new IllegalStateException("As contas da depreciação devem permanecer analíticas e ativas.");
+        }
+        UUID empresa = primeiro.getEmpresaId();
+        List<ContaDoPlano> estrutura = contas.buscarEstruturaDoPlano(empresa);
+        for (AtivoPatrimonial ativo : bens) {
+            validarContaPatrimonial(empresa, ativo.getContaPatrimonialId(), true, estrutura);
+            if (!ativo.getContaRedutoraId().equals(resolverRedutora(estrutura, ativo.getContaPatrimonialId()))) {
+                throw new IllegalStateException("A redutora vinculada à aquisição não corresponde à conta patrimonial.");
+            }
+            validarDespesa(empresa, ativo.getContaDespesaId(), estrutura);
+        }
+    }
+
+    private void validarCompetenciasDaDisponibilidade(UUID empresa, int anoOperacao, LocalDate data,
+                                                       BigDecimal base, Integer vidaUtil) {
+        if (data == null) {
+            return;
+        }
+        if (data.getYear() > 9999) {
+            throw new IllegalArgumentException("A disponibilidade para uso está fora do calendário contábil suportado.");
+        }
+        // Mesmo uma parcela zero é obrigatória até o acumulado arredondado atingir a base.
+        int mesesDevidos = base.signum() == 0 ? 1 : base.subtract(new BigDecimal("0.005"))
+                .multiply(BigDecimal.valueOf(vidaUtil)).divide(base, 0, RoundingMode.CEILING).intValueExact();
+        YearMonth inicio = YearMonth.from(data);
+        YearMonth limite = YearMonth.of(9999, 12);
+        YearMonth fim = inicio.plusMonths(mesesDevidos - 1L);
+        if (fim.isAfter(limite)) {
+            fim = limite;
+        }
+        // O exercício da operação já está bloqueado. Siga a ordem dos anos, sem bloquear períodos futuros.
+        short primeiroAnoFuturo = (short) Math.max(anoOperacao + 1, inicio.getYear());
+        for (var exercicio : exercicios.findAllByEmpresaIdAndAnoBetweenOrderByAno(
+                empresa, primeiroAnoFuturo, (short) fim.getYear())) {
+            em.refresh(exercicio, LockModeType.PESSIMISTIC_READ);
+            if (exercicio.getStatus() == StatusExercicio.ENCERRADO) {
+                throw new IllegalStateException("A disponibilidade para uso afeta um exercício encerrado.");
+            }
+        }
+        if (periodos.existsByEmpresaIdAndStatusAndDataInicioBetween(empresa, StatusPeriodo.ENCERRADO,
+                inicio.atDay(1), fim.atDay(1))) {
+            throw new IllegalStateException("A disponibilidade para uso afeta uma competência encerrada.");
+        }
+        if (base.signum() > 0 && periodos.existeLacunaAteUltimoEncerramento(empresa, inicio.atDay(1), fim.atDay(1))) {
+            throw new IllegalStateException("A disponibilidade para uso afeta uma lacuna anterior a uma competência encerrada.");
+        }
     }
 
     private BigDecimal validarDadosPatrimoniais(AquisicaoAtivo aquisicao, BigDecimal custo) {
@@ -134,18 +254,17 @@ public class AtivoPatrimonialService {
         return residual.signum() == 0 ? BigDecimal.ZERO.setScale(2) : PartidaContabil.normalizarValor(residual);
     }
 
-    private ContaDoPlano validarContaPatrimonial(AquisicaoAtivo aquisicao, List<ContaDoPlano> estrutura) {
-        UUID empresa = aquisicao.empresaId();
+    private ContaDoPlano validarContaPatrimonial(UUID empresa, UUID contaId, boolean depreciavel, List<ContaDoPlano> estrutura) {
         UUID contaImobilizado = contas.buscarContaDoModeloPadrao(empresa, IMOBILIZADO)
                 .orElseThrow(() -> new IllegalStateException("Grupo Imobilizado ausente no plano da empresa."));
-        ContaDoPlano conta = estrutura.stream().filter(c -> c.getId().equals(aquisicao.contaPatrimonialId()))
+        ContaDoPlano conta = estrutura.stream().filter(c -> c.getId().equals(contaId))
                 .findFirst().orElseThrow(() -> new IllegalArgumentException("Conta patrimonial não encontrada no plano."));
         if (!contaImobilizado.equals(conta.getContaPaiId()) || conta.getTipo() != TipoConta.ANALITICA
                 || conta.getGrupo() != GrupoConta.ATIVO || conta.getNatureza() != NaturezaConta.DEVEDORA
                 || conta.getContaRedutora() || conta.getClassificacaoBP() != ClassificacaoBP.ATIVO_NAO_CIRCULANTE) {
             throw new IllegalArgumentException("A conta patrimonial deve ser analítica devedora do Imobilizado.");
         }
-        if (!aquisicao.depreciavel()) {
+        if (!depreciavel) {
             validarReferencia(empresa, conta.getId(), List.of(TERRENOS),
                     "Terrenos é a classe não depreciável do Imobilizado no modelo padrão.");
         }
@@ -167,10 +286,10 @@ public class AtivoPatrimonialService {
         return redutora.getId();
     }
 
-    private void validarDespesa(AquisicaoAtivo aquisicao, List<ContaDoPlano> estrutura) {
+    private void validarDespesa(UUID empresa, UUID contaId, List<ContaDoPlano> estrutura) {
         String mensagem = "Informe uma conta de despesa de depreciação compatível com a finalidade do ativo.";
-        validarReferencia(aquisicao.empresaId(), aquisicao.contaDespesaId(), DESPESAS_DEPRECIACAO, mensagem);
-        ContaDoPlano despesa = estrutura.stream().filter(c -> c.getId().equals(aquisicao.contaDespesaId()))
+        validarReferencia(empresa, contaId, DESPESAS_DEPRECIACAO, mensagem);
+        ContaDoPlano despesa = estrutura.stream().filter(c -> c.getId().equals(contaId))
                 .findFirst().orElseThrow(() -> new IllegalArgumentException(mensagem));
         if (despesa.getGrupo() != GrupoConta.DESPESA || despesa.getNatureza() != NaturezaConta.DEVEDORA
                 || despesa.getContaRedutora() || despesa.getClassificacaoDRE() != ClassificacaoDRE.DESPESAS_OPERACIONAIS) {
@@ -193,15 +312,21 @@ public class AtivoPatrimonialService {
         return texto;
     }
 
-    private FichaAtivo ficha(AtivoPatrimonial ativo) {
+    private FichaAtivo ficha(AtivoPatrimonial ativo, List<ApropriacaoDepreciacao> historico) {
         LancamentoContabil lancamento = ativo.getLancamentoAquisicao();
         FichaAtivo.Situacao situacao = ativo.getDataDisponibilidade() == null
                 ? FichaAtivo.Situacao.AGUARDANDO_DISPONIBILIDADE : FichaAtivo.Situacao.DISPONIBILIDADE_REGISTRADA;
+        BigDecimal acumulada = historico.stream().map(ApropriacaoDepreciacao::valor)
+                .reduce(BigDecimal.ZERO.setScale(2), BigDecimal::add);
+        int mesesConsumidos = historico.size();
+        int mesesRestantes = ativo.isDepreciavel() ? ativo.getVidaUtilMeses() - mesesConsumidos : 0;
         return new FichaAtivo(ativo.getId(), ativo.getEmpresaId(), ativo.getUsuarioId(), ativo.getCodigo(),
                 ativo.getDescricao(), ativo.getContaPatrimonialId(), ativo.getDataAquisicao(), ativo.getDataDisponibilidade(),
                 ativo.getCustoAquisicao(), ativo.isDepreciavel(), ativo.getValorResidual(), ativo.getVidaUtilMeses(),
                 ativo.baseDepreciavel(), ativo.getContaRedutoraId(), ativo.getContaDespesaId(), situacao,
-                lancamento.getId(), lancamento.getExercicioId(), lancamento.getNumero());
+                lancamento.getId(), lancamento.getExercicioId(), lancamento.getNumero(), acumulada,
+                ativo.getCustoAquisicao().subtract(acumulada), ativo.baseDepreciavel().subtract(acumulada),
+                mesesConsumidos, mesesRestantes, historico);
     }
 
     private void auditar(AtivoPatrimonial ativo) {

@@ -124,6 +124,7 @@ class ConfirmacaoLancamentoContabilServiceTest {
         periodos.saveAndFlush(new PeriodoContabil(exercicios.getReferenceById(original.exercicioId()),
                 (short) 12, LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 31)));
         fechamento.encerrarPeriodo(original.empresaId(), original.usuarioId(), original.exercicioId(), original.periodoId());
+        CalendarioTestFixture.preencherEncerradosAteNovembro(jdbc, original.exercicioId(), original.data().getMonthValue() + 1);
         fechamento.encerrarExercicio(original.empresaId(), original.usuarioId(), original.exercicioId());
         assertEquals(1L, confirmar(outroExercicio, criarBalanceado(outroExercicio, VALOR)).getNumero());
         assertEquals(2L, ultimoNumero(original));

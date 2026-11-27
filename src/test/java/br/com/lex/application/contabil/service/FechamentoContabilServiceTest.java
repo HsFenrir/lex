@@ -17,6 +17,7 @@ import br.com.lex.domain.contabil.repository.ContaContabilRepository;
 import jakarta.persistence.EntityManager;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
+import org.postgresql.util.PSQLException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -132,6 +133,7 @@ class FechamentoContabilServiceTest {
         confirmar(c, rascunho(c, c.calendario(), JANEIRO, CAIXA, RECEITA, "120.00"));
         confirmar(c, rascunho(c, c.calendario(), JANEIRO, DESPESA, CAIXA, "30.00"));
         fecharJaneiro(c);
+        completarAnoDaFixture(c);
         var antes = bp.emitir(c.empresa(), c.usuario(), c.calendario().exercicio(), DEZEMBRO);
         Dre dreAntes = emitirDre(c);
         assertThat(antes.resultadoNaoEncerrado()).isEqualByComparingTo("90");
@@ -199,6 +201,7 @@ class FechamentoContabilServiceTest {
         confirmar(c, rascunho(c, c.calendario(), JANEIRO, DESPESA, CAIXA, limite));
         confirmar(c, rascunho(c, c.calendario(), JANEIRO, DESPESA, CAIXA, limite));
         fecharJaneiro(c);
+        completarAnoDaFixture(c);
         var encerrado = fecharAno(c);
         assertThat(encerrado.resultado()).isEqualByComparingTo("-199999999999999999.98");
         assertThat(saldo(c, c.calendario(), PREJUIZOS, DEZEMBRO)).isEqualByComparingTo("199999999999999999.98");
@@ -217,6 +220,7 @@ class FechamentoContabilServiceTest {
         confirmar(c, rascunho(c, c.calendario(), JANEIRO, CAIXA, RECEITA, "20.00"));
         confirmar(c, rascunho(c, c.calendario(), JANEIRO, DESPESA, CAIXA, "20.00"));
         fecharJaneiro(c);
+        completarAnoDaFixture(c);
         var resultado = fecharAno(c);
         assertThat(resultado.resultado()).isEqualByComparingTo("0");
         assertThat(resultado.lancamentoAberturaId()).isNull();
@@ -227,6 +231,7 @@ class FechamentoContabilServiceTest {
 
         Cenario vazio = criarCenario();
         fecharJaneiro(vazio);
+        completarAnoDaFixture(vazio);
         var semPartidas = fecharAno(vazio);
         assertThat(semPartidas.lancamentoEncerramentoId()).isNull();
         assertThat(semPartidas.lancamentoAberturaId()).isNull();
@@ -239,6 +244,7 @@ class FechamentoContabilServiceTest {
     void rejeitaPendenciasClassificacaoIndefinidaEContaInativa() {
         Cenario c = criarCenario();
         fecharJaneiro(c);
+        completarAnoDaFixture(c);
         UUID pendente = rascunho(c, c.calendario(), DEZEMBRO, CAIXA, RECEITA, "10.00");
         assertThatThrownBy(() -> fecharAno(c)).hasMessageContaining("rascunho");
         confirmar(c, pendente);
@@ -257,6 +263,7 @@ class FechamentoContabilServiceTest {
         Calendario destino = criarCalendario(em.getReference(Empresa.class, c.empresa()), (short) 2027);
         jdbc.update("update periodo_contabil set status = 'ENCERRADO' where id = ?", destino.janeiro());
         fecharJaneiro(c);
+        completarAnoDaFixture(c);
         assertThatThrownBy(() -> fecharAno(c)).hasMessageContaining("destino está incompatível");
         assertThat(statusPeriodo(destino.janeiro())).isEqualTo("ENCERRADO");
         assertThat(statusPeriodo(c.calendario().dezembro())).isEqualTo("ABERTO");
@@ -299,6 +306,7 @@ class FechamentoContabilServiceTest {
             executar(schema, () -> {
                 confirmar(c, rascunho(c, c.calendario(), JANEIRO, CAIXA, RECEITA, "20.00"));
                 fecharJaneiro(c);
+                completarAnoDaFixture(c);
                 jdbc.execute("""
                         alter table lancamento_contabil add constraint teste_bloquear_transporte
                         check (origem <> 'ABERTURA' or status <> 'CONFIRMADO')
@@ -342,6 +350,7 @@ class FechamentoContabilServiceTest {
                 UUID original = rascunho(c, c.calendario(), JANEIRO, CAIXA, RECEITA, "50.00");
                 confirmar(c, original);
                 fecharJaneiro(c);
+                completarAnoDaFixture(c);
                 return lancamentos.criarRascunhoEstorno(c.empresa(), c.usuario(), original,
                         c.calendario().exercicio(), c.calendario().dezembro(), DEZEMBRO, "Estorno").getId();
             });
@@ -369,6 +378,7 @@ class FechamentoContabilServiceTest {
             assertThat(criacao.erro()).isInstanceOf(IllegalStateException.class).hasMessageContaining("período deve estar aberto");
             executar(schema, () -> {
                 assertThat(jdbc.queryForObject("select count(*) from lancamento_contabil", Long.class)).isZero();
+                completarAnoDaFixture(c);
                 return null;
             });
             Disputa duplicado = disputar(schema, () -> fecharAno(c), () -> fecharAno(c));
@@ -388,6 +398,7 @@ class FechamentoContabilServiceTest {
             Calendario destino = executar(schema, () -> {
                 confirmar(c, rascunho(c, c.calendario(), JANEIRO, CAIXA, RECEITA, "20.00"));
                 fecharJaneiro(c);
+                completarAnoDaFixture(c);
                 return criarCalendario(em.getReference(Empresa.class, c.empresa()), (short) 2027);
             });
             UUID manual = executar(schema, () -> rascunho(c, destino, ANO_SEGUINTE, CAIXA, RECEITA, "10.00"));
@@ -406,6 +417,204 @@ class FechamentoContabilServiceTest {
                 return null;
             });
         });
+    }
+
+    @Test
+    void cadastroAnualComecaEmAnoValidoEAvancaSemSaltosPorEmpresa() {
+        comCenario((schema, c) -> {
+            UUID outra = executar(schema, () -> criarEmpresaSemCalendario());
+            assertThatThrownBy(() -> executar(schema, () -> cadastrarAno(c.empresa(), 2028)))
+                    .satisfies(erro -> conferirConstraint(erro, "23514", "ck_exercicio_ordem_calendario"));
+            assertThat(executar(schema, () -> anos(c.empresa()))).containsExactly(2026);
+            executar(schema, () -> cadastrarAno(outra, 9998));
+            executar(schema, () -> cadastrarAno(outra, 9999));
+            assertThatThrownBy(() -> executar(schema, () -> cadastrarAno(outra, 10000)))
+                    .satisfies(erro -> conferirConstraint(erro, "23514", "ck_exercicio_ordem_calendario"))
+                    .hasMessageContaining("9999");
+            executar(schema, () -> cadastrarAno(c.empresa(), 2027));
+            executar(schema, () -> cadastrarAno(c.empresa(), 2028));
+            assertThatThrownBy(() -> executar(schema, () -> cadastrarAno(c.empresa(), 2025)))
+                    .satisfies(erro -> conferirConstraint(erro, "23514", "ck_exercicio_ordem_calendario"));
+            assertThat(executar(schema, () -> anos(c.empresa()))).containsExactly(2026, 2027, 2028);
+            assertThat(executar(schema, () -> anos(outra))).containsExactly(9998, 9999);
+            assertThat(executar(schema, () -> jdbc.queryForObject("""
+                    select count(*) from flyway_schema_history where success and version in
+                       ('1','2','3','4','5','6','7','8','9','10','11','12')
+                    """, Long.class))).isEqualTo(12L);
+        });
+    }
+
+    @Test
+    void protegeIdentidadeEExclusaoDeExercicioComContinuidade() {
+        comCenario((schema, c) -> {
+            UUID outra = executar(schema, this::criarEmpresaSemCalendario);
+            assertThatThrownBy(() -> executar(schema, () -> excluirAno(c.calendario().exercicio())))
+                    .satisfies(erro -> conferirConstraint(erro, "23514", "ck_exercicio_exclusao_continuidade"));
+            UUID intermediario = executar(schema, () -> cadastrarAno(c.empresa(), 2027));
+            UUID ultimo = executar(schema, () -> cadastrarAno(c.empresa(), 2028));
+            assertThatThrownBy(() -> executar(schema, () -> jdbc.update("""
+                    update exercicio_contabil set ano=2029, data_inicio=date '2029-01-01', data_fim=date '2029-12-31'
+                    where id=?
+                    """, intermediario))).satisfies(erro -> conferirConstraint(erro, "23514", "ck_exercicio_identidade_calendario"));
+            assertThatThrownBy(() -> executar(schema, () -> jdbc.update("update exercicio_contabil set empresa_id=? where id=?",
+                    outra, intermediario))).satisfies(erro -> conferirConstraint(erro, "23514", "ck_exercicio_identidade_calendario"));
+            assertThatThrownBy(() -> executar(schema, () -> excluirAno(intermediario)))
+                    .satisfies(erro -> conferirConstraint(erro, "23514", "ck_exercicio_exclusao_continuidade"));
+            // Um último exercício ainda aberto e sem referências pode ser descartado.
+            assertThat(executar(schema, () -> excluirAno(ultimo))).isEqualTo(1);
+            executar(schema, () -> jdbc.update("update exercicio_contabil set status='ENCERRADO' where id=?", intermediario));
+            assertThatThrownBy(() -> executar(schema, () -> excluirAno(intermediario)))
+                    .satisfies(erro -> conferirConstraint(erro, "23514", "ck_exercicio_exclusao_continuidade"));
+            assertThat(executar(schema, () -> anos(c.empresa()))).containsExactly(2026, 2027);
+            assertThat(executar(schema, () -> anos(outra))).isEmpty();
+        });
+    }
+
+    @Test
+    void upgradeV12DiagnosticaAnosAusentesSemPreencherLegadoOuEncerrarExercicio() {
+        comSchema(schema -> {
+            migrar(schema, "11");
+            Cenario c = executar(schema, this::criarCenario);
+            executar(schema, () -> {
+                prepararAnoParaContinuidade(c);
+                return cadastrarAno(c.empresa(), 2028);
+            });
+            migrar(schema, null);
+            assertThatThrownBy(() -> executar(schema, () -> cadastrarAno(c.empresa(), 2029)))
+                    .satisfies(erro -> conferirConstraint(erro, "23514", "ck_exercicio_lacuna_legada"))
+                    .hasMessageContaining("2027 a 2027 (entre 2026 e 2028)");
+            assertThatThrownBy(() -> executar(schema, () -> fecharAno(c)))
+                    .satisfies(erro -> conferirConstraint(erro, "23514", "ck_exercicio_lacuna_legada"))
+                    .hasMessageContaining("2027 a 2027 (entre 2026 e 2028)");
+            executar(schema, () -> {
+                assertThat(anos(c.empresa())).containsExactly(2026, 2028);
+                assertThat(statusPeriodo(c.calendario().dezembro())).isEqualTo("ABERTO");
+                assertThat(jdbc.queryForObject("select count(*) from lancamento_contabil", Long.class)).isEqualTo(1L);
+                assertThat(jdbc.queryForObject("select ultimo_numero from sequencia_lancamento", Long.class)).isEqualTo(1L);
+                assertThat(jdbc.queryForObject("select count(*) from auditoria_evento", Long.class)).isEqualTo(1L);
+                assertThat(jdbc.queryForObject("""
+                        select count(*) from flyway_schema_history where version='12' and success
+                        """, Long.class)).isEqualTo(1L);
+                return null;
+            });
+        });
+    }
+
+    @Test
+    void fechamentoECadastroConcorrentesCriamOuReutilizamUmUnicoSucessor() {
+        comCenario((schema, c) -> {
+            Cenario outro = executar(schema, this::criarCenario);
+            executar(schema, () -> {
+                prepararAnoParaContinuidade(c);
+                prepararAnoParaContinuidade(outro);
+                return null;
+            });
+            var cadastroPrimeiro = disputar(schema, () -> cadastrarAno(c.empresa(), 2027), () -> fecharAno(c));
+            assertThat(cadastroPrimeiro.erro()).isNull();
+            var fechamentoPrimeiro = disputar(schema, () -> fecharAno(outro), () -> cadastrarAno(outro.empresa(), 2027));
+            conferirConstraint(fechamentoPrimeiro.erro(), "23505", "uq_exercicio_empresa_ano");
+            executar(schema, () -> {
+                for (Cenario origem : List.of(c, outro)) {
+                    assertThat(anos(origem.empresa())).containsExactly(2026, 2027);
+                    UUID sucessor = jdbc.queryForObject("""
+                            select id from exercicio_contabil where empresa_id=? and exercicio_origem_id=?
+                            """, UUID.class, origem.empresa(), origem.calendario().exercicio());
+                    assertThat(jdbc.queryForObject("""
+                            select count(*) from lancamento_contabil where exercicio_id=? and origem='ABERTURA'
+                            """, Long.class, sucessor)).isEqualTo(1L);
+                    assertThat(jdbc.queryForObject("select count(*) from periodo_contabil where exercicio_id=?",
+                            Long.class, sucessor)).isEqualTo(12L);
+                    assertThat(razao.emitir(origem.empresa(), origem.usuario(), sucessor, origem.contas().get(CAIXA),
+                            ANO_SEGUINTE, ANO_SEGUINTE).saldos().saldoFinal().valor()).isEqualByComparingTo("20");
+                }
+                return null;
+            });
+        });
+    }
+
+    @Test
+    void cadastrosConcorrentesDecidemPelaSequenciaAtualizadaEmAmbasAsOrdens() {
+        comCenario((schema, c) -> {
+            Cenario outro = executar(schema, this::criarCenario);
+            var consecutivoPrimeiro = disputar(schema, () -> cadastrarAno(c.empresa(), 2027),
+                    () -> cadastrarAno(c.empresa(), 2028));
+            assertThat(consecutivoPrimeiro.erro()).isNull();
+            // Mantenha o bloqueio do pedido de 2028 enquanto 2027 entra na fila. O pedido
+            // adiantado precisa ser rejeitado antes que o cadastro de 2027 possa prosseguir.
+            var pronto = new CompletableFuture<Integer>();
+            var tentando = new CompletableFuture<Integer>();
+            var liberar = new CountDownLatch(1);
+            try (var threads = Executors.newFixedThreadPool(2)) {
+                try {
+                    var adiantado = threads.submit(() -> executar(schema, () -> {
+                        jdbc.queryForObject("select bloquear_e_validar_exercicios(?, true)", Integer.class, outro.empresa());
+                        pronto.complete(pid());
+                        aguardar(liberar);
+                        return cadastrarAno(outro.empresa(), 2028);
+                    }));
+                    int bloqueadora = pronto.get(10, TimeUnit.SECONDS);
+                    var consecutivo = threads.submit(() -> executar(schema, () -> {
+                        tentando.complete(pid());
+                        return cadastrarAno(outro.empresa(), 2027);
+                    }));
+                    aguardarBloqueio(bloqueadora, tentando.get(5, TimeUnit.SECONDS));
+                    liberar.countDown();
+                    assertThatThrownBy(() -> adiantado.get(10, TimeUnit.SECONDS))
+                            .isInstanceOfSatisfying(ExecutionException.class, erro ->
+                                    conferirConstraint(erro.getCause(), "23514", "ck_exercicio_ordem_calendario"));
+                    assertThat(consecutivo.get(10, TimeUnit.SECONDS)).isNotNull();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(e);
+                } catch (ExecutionException | TimeoutException e) {
+                    throw new AssertionError(e);
+                } finally {
+                    liberar.countDown();
+                    threads.shutdownNow();
+                }
+            }
+            assertThat(executar(schema, () -> anos(c.empresa()))).containsExactly(2026, 2027, 2028);
+            assertThat(executar(schema, () -> anos(outro.empresa()))).containsExactly(2026, 2027);
+        });
+    }
+
+    private void prepararAnoParaContinuidade(Cenario c) {
+        confirmar(c, rascunho(c, c.calendario(), JANEIRO, CAIXA, RECEITA, "20"));
+        fecharJaneiro(c);
+        completarAnoDaFixture(c);
+    }
+
+    private UUID criarEmpresaSemCalendario() {
+        Usuario usuario = new Usuario("Titular", UUID.randomUUID() + "@example.test", "hash-teste");
+        em.persist(usuario);
+        Empresa empresa = new Empresa(usuario, "Empresa", "Empresa", null);
+        em.persist(empresa);
+        em.flush();
+        return empresa.getId();
+    }
+
+    private UUID cadastrarAno(UUID empresa, int ano) {
+        return jdbc.queryForObject("""
+                insert into exercicio_contabil (empresa_id, ano, data_inicio, data_fim)
+                values (?, ?, make_date(?,1,1), make_date(?,12,31)) returning id
+                """, UUID.class, empresa, ano, ano, ano);
+    }
+
+    private List<Integer> anos(UUID empresa) {
+        return jdbc.queryForList("select ano from exercicio_contabil where empresa_id=? order by ano", Integer.class, empresa);
+    }
+
+    private int excluirAno(UUID exercicio) {
+        return jdbc.update("delete from exercicio_contabil where id=?", exercicio);
+    }
+
+    private void conferirConstraint(Throwable erro, String estado, String nome) {
+        assertThat(erro).isInstanceOfSatisfying(DataIntegrityViolationException.class, violacao ->
+                assertThat(violacao.getMostSpecificCause()).isInstanceOfSatisfying(PSQLException.class, causa -> {
+                    assertThat(causa.getSQLState()).isEqualTo(estado);
+                    assertThat(causa.getServerErrorMessage()).isNotNull();
+                    assertThat(causa.getServerErrorMessage().getConstraint()).isEqualTo(nome);
+                }));
     }
 
     private Disputa disputar(String schema, Supplier<?> primeira, Supplier<?> segunda) {
@@ -492,6 +701,10 @@ class FechamentoContabilServiceTest {
 
     private FechamentoContabilService.ExercicioEncerrado fecharAno(Cenario c) {
         return fechamento.encerrarExercicio(c.empresa(), c.usuario(), c.calendario().exercicio());
+    }
+
+    private void completarAnoDaFixture(Cenario c) {
+        CalendarioTestFixture.preencherEncerradosAteNovembro(jdbc, c.calendario().exercicio(), 2);
     }
 
     private String statusPeriodo(UUID periodo) {

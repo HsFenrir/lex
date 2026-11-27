@@ -3,6 +3,7 @@ package br.com.lex.domain.contabil.repository;
 import br.com.lex.domain.contabil.entity.ExercicioContabil;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -12,6 +13,8 @@ public interface ExercicioContabilRepository
     boolean existsByEmpresaIdAndAnoLessThan(UUID empresaId, Short ano);
 
     Optional<ExercicioContabil> findByEmpresaIdAndAno(UUID empresaId, Short ano);
+
+    List<ExercicioContabil> findAllByEmpresaIdAndAnoBetweenOrderByAno(UUID empresaId, Short inicio, Short fim);
 
     Optional<ExercicioContabil> findByIdAndEmpresaId(
             UUID id,

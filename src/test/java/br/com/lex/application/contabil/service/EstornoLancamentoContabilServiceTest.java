@@ -197,6 +197,7 @@ class EstornoLancamentoContabilServiceTest {
         periodos.saveAndFlush(new PeriodoContabil(exercicios.getReferenceById(dados.destino().exercicio()),
                 (short) 12, LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 31)));
         fechamento.encerrarPeriodo(dados.empresa(), dados.usuario(), dados.destino().exercicio(), dados.destino().periodo());
+        CalendarioTestFixture.preencherEncerradosAteNovembro(jdbc, dados.destino().exercicio(), DATA.getMonthValue() + 1);
         fechamento.encerrarExercicio(dados.empresa(), dados.usuario(), dados.destino().exercicio());
         UUID estorno = criarEstorno(dados, original, futuro, DATA.plusYears(1));
         confirmarEstorno(dados, estorno);

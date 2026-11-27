@@ -89,4 +89,14 @@ public class AtivoPatrimonial {
     public BigDecimal baseDepreciavel() {
         return depreciavel ? custoAquisicao.subtract(valorResidual) : BigDecimal.ZERO.setScale(2);
     }
+
+    public void registrarDisponibilidade(LocalDate data) {
+        if (dataDisponibilidade != null) {
+            throw new IllegalStateException("A disponibilidade para uso já foi registrada.");
+        }
+        if (data == null || data.isBefore(dataAquisicao)) {
+            throw new IllegalArgumentException("A disponibilidade para uso não pode anteceder a aquisição.");
+        }
+        dataDisponibilidade = data;
+    }
 }

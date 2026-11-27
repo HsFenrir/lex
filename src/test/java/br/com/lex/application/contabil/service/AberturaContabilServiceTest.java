@@ -312,6 +312,7 @@ class AberturaContabilServiceTest {
                         (short) 12, fim.withDayOfMonth(1), fim));
                 em.flush();
                 fechamento.encerrarPeriodo(dados.empresa(), dados.usuario(), dados.exercicio(), dados.periodo());
+                CalendarioTestFixture.preencherEncerradosAteNovembro(jdbc, dados.exercicio(), dados.data().getMonthValue() + 1);
                 fechamento.encerrarExercicio(dados.empresa(), dados.usuario(), dados.exercicio());
                 assertThat(confirmarManual(seguinte, criarManual(seguinte, seguinte.data().minusDays(1))))
                         .isEqualTo(2L);

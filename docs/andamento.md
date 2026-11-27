@@ -1,11 +1,12 @@
 # LEX — Andamento e passagem de contexto
 
-Atualização em 27/11/2026, após a validação do incremento 8A de controle patrimonial. Apresentação em 30/11/2026.
+Atualização em 27/11/2026, após a conclusão técnica do incremento 8B de depreciação linear e integridade do calendário. Apresentação em 30/11/2026.
 
 ## 1. Base verificada
 
 - O 6E foi concluído e publicado em `d2ca25a`, com a estratégia de contingência frontend e os atributos para arquivos binários. O 7A foi concluído e publicado em `23ed409`, com a estrutura de estoque PEPS e a V8. Na revisão do 7B, `HEAD` e a referência local `origin/main` apontavam para `23ed409`. O 7B foi concluído e validado na árvore de trabalho.
 - O 7B foi publicado em `a98a22e`, checkpoint de `HEAD` e da referência local `origin/main` na revisão do 8A. O 8A foi concluído e validado na árvore de trabalho, com aquisição patrimonial integrada e schema V9.
+- O 8A foi publicado em `b7684c4` (`feat: implement asset management and acquisition accounting`), checkpoint da revisão do 8B. O incremento 8B está tecnicamente concluído e apto para commit na árvore de trabalho. A publicação depende do commit e do push.
 - Incremento 4C publicado em `677d725`. Incremento 5A publicado em `d82f341` (`feat: implement trial balance and hierarchical account aggregation`), com seis arquivos, 512 inserções e nove exclusões. Incremento 5B publicado em `37d2da4`. Incremento 4D publicado em `bba714b`. Os incrementos 6A a 6C foram publicados em `597f34e`. O 6D entregou o planejamento da integração web.
 - As metas de 25/11 foram integralmente concluídas. Os serviços de Livro Diário e Livro Razão foram antecipados em relação às atividades previstas para 26/11.
 - AGENTS.md e documentação inicial publicados em 9d41a94. Incremento 1 publicado em 54a4b39, script de testes em 9fbd7d1, escopo acadêmico confirmado em 1bf3fbc e incremento 2 publicado em 47cf2a8.
@@ -32,13 +33,19 @@ No 8A, a execução do desenvolvedor terminou em 27/11/2026 às 02:06:50 (UTC−
 
 A suíte do incremento 6 usou o perfil `test` no PostgreSQL 18.4 em `jdbc:postgresql://127.0.0.1:5432/lex_test`. Foram validadas sete migrations, com o schema `public` na V7 e 28 schemas descartáveis. A execução anterior aplicou a V7 sobre o `public` que estava na V6. A suíte cobre também o upgrade com exercício legado em schema descartável e a instalação desde a V1. Os testes aguardam o encerramento das threads com timeout e removem os schemas em `finally`. O script exige a role `lex_test_runner` e a ausência de privilégio `CONNECT` em `lex_dev` antes de iniciar o Maven.
 
-| Classe | Testes aprovados no 8A |
+No 8B, a execução de `.\scripts\test.ps1` pelo desenvolvedor terminou em 27/11/2026 às 02:34:54 (UTC−03:00), em 02:11 min, com `BUILD SUCCESS`. O ambiente foi PostgreSQL 18.4, banco `lex_test` e schema V10. Foram compiladas 65 fontes principais e 17 classes de teste. O Spring identificou 12 repositórios JPA. Os 17 relatórios Surefire confirmam **166 testes aprovados, zero falhas, zero erros e zero ignorados**, com os 154 anteriores e 12 novos. Os 18 casos de `AtivoPatrimonialServiceTest` coincidem com os métodos atuais. As classes alteradas foram compiladas entre 02:32:53 e 02:33:03, depois das fontes e antes dos relatórios, gravados de 02:33:50 a 02:34:54. Os relatórios registram a instalação desde V1 e o upgrade de V9 para V10. V1–V9 coincidem com `b7684c4`. A V10 local e a cópia em `target/classes` têm SHA-256 `e360c838fff0ce27d41f03de722a7bb5ec8ec2ab48cf284ff3c6188d3fd4d66c`.
+
+Após a correção temporal, `.\scripts\test.ps1` terminou em 27/11/2026 às 02:55:34 (UTC−03:00), em 02:00 min, com `BUILD SUCCESS`, PostgreSQL 18.4, banco `lex_test` e schema V11. Os 17 relatórios Surefire confirmam **174 testes aprovados, zero falhas, zero erros e zero ignorados**. Foram compiladas 65 fontes principais e 18 fontes de teste. Os 26 casos de `AtivoPatrimonialServiceTest` coincidem com os métodos atuais. As classes alteradas foram compiladas entre 02:53:41 e 02:53:49, após as fontes e antes dos relatórios, de 02:54:24 a 02:55:34. O Flyway registrou instalação desde V1 e upgrades de V6, V7, V8, V9 e V10 até V11. V1–V9 coincidem com `b7684c4`. V10 e V11 coincidem com as cópias compiladas. A V10 também mantém o SHA-256 da validação anterior.
+
+Após a correção da continuidade anual, `.\scripts\test.ps1` terminou em 27/11/2026 às 03:17:01 (UTC−03:00), em 02:04 min, com `BUILD SUCCESS`, PostgreSQL 18.4, banco `lex_test` e schema V12. Foram compiladas 65 fontes principais e 18 fontes de teste. O Spring identificou 12 repositórios JPA. Os 17 relatórios Surefire confirmam **179 testes aprovados, zero falhas, zero erros e zero ignorados**, com 174 anteriores e cinco novos de continuidade anual. Os 17 casos de `FechamentoContabilServiceTest` e os 26 de `AtivoPatrimonialServiceTest` coincidem com os métodos atuais. As classes alteradas foram compiladas entre 03:15:08 e 03:15:17, após as fontes e antes dos relatórios, gravados entre 03:15:52 e 03:17:01. O Flyway registrou instalação desde V1 e upgrade de V11 para V12. V1–V9 coincidem com `b7684c4`, V10 e V11 mantêm os hashes das validações anteriores e V10–V12 coincidem com as cópias compiladas.
+
+| Classe | Testes aprovados no 8B |
 |---|---:|
 | AberturaContabilServiceTest | 13 |
-| AtivoPatrimonialServiceTest | 6 |
+| AtivoPatrimonialServiceTest | 26 |
 | BalanceteServiceTest | 5 |
 | EstornoLancamentoContabilServiceTest | 19 |
-| FechamentoContabilServiceTest | 12 |
+| FechamentoContabilServiceTest | 17 |
 | ConfirmacaoLancamentoContabilServiceTest | 18 |
 | DemonstracoesContabeisServiceTest | 6 |
 | EstoqueServiceTest | 15 |
@@ -51,7 +58,7 @@ A suíte do incremento 6 usou o perfil `test` no PostgreSQL 18.4 em `jdbc:postgr
 | PartidaContabilRepositoryTest | 5 |
 | PlanoContasRepositoryTest | 1 |
 | LexApplicationTests | 1 |
-| Total | 154 |
+| Total | 179 |
 
 Os cenários negativos incluem violações esperadas das chaves estrangeiras `fk_conta_pai` e `fk_conta_reduzida` e das regras de unicidade `uq_lancamento_estorno_unico` e `uq_lancamento_numero_empresa_exercicio`. Os testes respectivos passaram. A colisão de número foi provocada após a alocação para verificar que o lançamento permanece em rascunho e a atualização do contador é revertida.
 
@@ -76,7 +83,7 @@ Na validação do incremento 1, em 25/11 às 01:46:32 (UTC−03:00), `.\mvnw.cmd
 | Balanço Patrimonial e DRE | Incremento 5B validado. Emissão por data-base e intervalo, respectivamente. |
 | Fechamento e continuidade | Incrementos 6A, 6B e 6C validados na camada contábil. Integração com os módulos operacionais pendente. |
 | Estoque PEPS | 7A e 7B validados. Cadastro, consultas, lotes, alocações PEPS e contabilização de compras e vendas disponíveis. |
-| Controle patrimonial | 8A validado. Aquisição contabilizada, consulta e listagem por empresa disponíveis. Apropriação mensal prevista no 8B. |
+| Controle patrimonial | 8A publicado. O 8B validou disponibilidade posterior, apropriação individual e coletiva, histórico patrimonial e verificação no fechamento. Publicação pendente de commit e push. |
 | API/frontend | Spring MVC e Thymeleaf como dependências. Controllers, autenticação e telas pendentes. O 6D planejou 36 rotas HTTP, com 16 serviços disponíveis e 20 operações dependentes de implementação adicional. |
 
 ### Arquivos e contratos do incremento 1
@@ -233,11 +240,25 @@ Os testes do 7A usam partidas de fixture para satisfazer o vínculo obrigatório
 
 - `AtivoPatrimonialService.registrarAquisicao(AquisicaoAtivo)` registra o bem e confirma a aquisição. `consultar(empresaId, usuarioId, ativoId)` e `listar(empresaId, usuarioId)` exigem titularidade e retornam fichas imutáveis. `FichaAtivo` reúne identificação, valores, contas, situação da disponibilidade e referência do lançamento original com exercício e número contábil.
 - A aquisição debita uma conta analítica devedora do Imobilizado e credita Caixa Geral, Bancos Conta Movimento, Fornecedores Nacionais ou Fornecedores de Longo Prazo. O serviço usa as referências do modelo padrão no plano da empresa e valida as contas ativas e analíticas. Para ativo depreciável, exige uma única redutora credora vinculada à conta patrimonial e a escolha explícita entre despesa comercial (`6.1.005`) e administrativa (`6.2.006`). Terrenos são tratados como não depreciáveis, com vida útil e contas de depreciação ausentes.
-- Custo e residual usam `BigDecimal` com centavos exatos. O custo é positivo e o residual pode variar de zero ao custo. O cadastro mantém a base depreciável como custo menos residual, a vida útil positiva em meses e a data de disponibilidade igual ou posterior à aquisição. A data pode ficar ausente. A situação da ficha indica se a disponibilidade foi registrada, sem inferir que o bem já está em uso. A apropriação linear mensal e a operação para registrar a disponibilidade posteriormente seguem pendentes.
+- Custo e residual usam `BigDecimal` com centavos exatos. O custo é positivo e o residual pode variar de zero ao custo. O cadastro mantém a base depreciável como custo menos residual, a vida útil positiva em meses e a data de disponibilidade igual ou posterior à aquisição. A data pode ficar ausente. A situação da ficha indica se a disponibilidade foi registrada, sem inferir que o bem já está em uso. O 8B acrescenta a apropriação mensal e o registro posterior da disponibilidade.
 - A V9 cria `ativo_patrimonial`, garante unicidade do código por empresa e impede que dois ativos compartilhem o mesmo lançamento de aquisição. As chaves compostas mantêm plano, contas e lançamento no escopo da empresa. As restrições verificam valores, datas e campos de depreciação. Ao inserir ou atualizar o ativo, um trigger diferido exige no commit um lançamento `ATIVO` confirmado com empresa, plano, data e usuário compatíveis. A autorização do titular, a classificação das contas e a correspondência das partidas ao custo são garantias do serviço. Alterações diretas apenas no lançamento ficam fora da verificação desse trigger.
 - A aquisição usa uma transação `READ COMMITTED`, com bloqueios de período, exercício, empresa e usuário, reserva do código patrimonial, bloqueio das contas por ID, lançamento novo e sequência. O núcleo contábil valida o calendário, a abertura de migração e a continuidade. A auditoria `AQUISICAO` registra usuário, empresa, ativo, lançamento, datas e valores na mesma transação. Os testes verificaram rollback após confirmação e auditoria, disputa concorrente pelo código patrimonial e bloqueio do estorno genérico.
 - Os testes reconciliaram as aquisições com Diário, Razão, Balancete e BP. Na continuidade patrimonial, o saldo passa ao exercício seguinte por abertura contábil e o ativo conserva o cadastro e o lançamento de aquisição originais. A conciliação de saldos patrimoniais importados segue pendente.
 - Após a primeira execução, as asserções de constraints passaram a validar a `PSQLException`, o SQLState e `ServerErrorMessage.getConstraint()`. O vínculo obrigatório usa `23514` e `ck_ativo_patrimonial_contabilizado`. A duplicidade simples e concorrente usa `23505` e `uq_ativo_patrimonial_codigo`. Esse padrão deve ser usado no 8B para identificar constraints específicas.
+
+### Contratos e garantias do incremento 8B
+
+- `AtivoPatrimonialService.registrarDisponibilidade(empresaId, usuarioId, exercicioId, periodoId, ativoId, data)` registra uma única vez a data de uso em período aberto, a partir da aquisição. A operação bloqueia o ativo, rejeita alterações quando há apropriações e audita o estado anterior e posterior. Custo, residual, vida útil, contas e lançamento originais são preservados pelo serviço. A aquisição rejeita uma data de disponibilidade que pertença a um mês já encerrado.
+- `DepreciacaoService.apropriar(empresaId, usuarioId, exercicioId, periodoId, ativoId)` processa um ativo. `processarCompetencia(empresaId, usuarioId, exercicioId, periodoId)` processa os ativos elegíveis em lote e retorna competência, novas apropriações, apropriações já existentes, ativos inelegíveis com motivos e total novo. Cada apropriação inclui valor e referência contábil, quando existir. Na competência aberta, repetir o lote reaproveita os registros. Uma competência anterior pendente interrompe o lote com diagnóstico por ativo.
+- O mês da disponibilidade recebe a parcela mensal integral, inclusive para disponibilidades no decorrer do mês. A parcela é a diferença entre o acumulado linear arredondado com `HALF_UP` e o já apropriado. A base é custo menos residual. A sequência termina ao esgotar a base ou a vida útil. Uma competência com valor zero é persistida e auditada sem lançamento ou número. A ficha acumula apenas apropriações efetivas, traz valor líquido, base e vida útil remanescentes, competências, histórico e referências contábeis.
+- Valores positivos debitam a despesa comercial ou administrativa e creditam a redutora associada na aquisição. As contas são revalidadas e o núcleo confirma o lançamento `DEPRECIACAO` no último dia do mês. O estorno genérico é bloqueado. A suíte cobre conciliação com Diário, Razão, Balancete, BP e DRE, preservação da despesa na DRE após o encerramento e continuidade da depreciação no exercício seguinte.
+- A apropriação individual e o lote usam `READ COMMITTED`. O lote bloqueia o calendário, os ativos por ID e as contas por ID antes de usar a sequência. A auditoria, as apropriações, os lançamentos, as partidas e a numeração são revertidos juntos em caso de falha. A suíte cobre a disputa entre apropriações individuais e coletivas e a espera do fechamento pelo commit da apropriação.
+- O lote considera os ativos encontrados na seleção inicial. Aquisições que entram depois podem ser processadas em outra execução. O fechamento mensal e anual verifica a primeira competência pendente por ativo até a data de corte sob bloqueio exclusivo do calendário. Aquisições e registros de disponibilidade que disputam o mesmo exercício são serializados pelo calendário. Se a operação patrimonial confirmar primeiro, o fechamento vê a pendência, inclusive quando a parcela esperada é zero. Se o fechamento confirmar primeiro, o serviço rejeita operações cujo mês de disponibilidade já esteja encerrado. Ativos indisponíveis, não depreciáveis ou com base esgotada ficam fora da cobrança.
+- A V10 garante unicidade por ativo e competência, exclusividade do lançamento, isolamento por chaves compostas, valor não negativo e vínculo obrigatório para valor positivo. Na gravação da apropriação, o trigger verifica a elegibilidade básica, a competência e a compatibilidade do lançamento confirmado. A ordem das competências, a base acumulada, a correspondência das partidas às contas e a proteção do fechamento dependem dos serviços.
+- A V11 bloqueia o cadastro retroativo de mês anterior a uma competência encerrada, a inclusão em exercício fechado, a exclusão de competências alcançadas por encerramento e a alteração das chaves e datas do calendário de períodos. Para encerrar, o calendário deve estar completo desde o mês da abertura de migração, janeiro na continuidade ou o primeiro mês cadastrado no exercício inicial. Aquisição e disponibilidade verificam a faixa de meses efetivamente devidos, incluindo parcelas de valor zero, exercícios posteriores e lacunas legadas anteriores a um mês fechado. As fixtures anuais completam os meses sem movimento. O caso histórico de mês fechado é preparado na V10 para validar a proteção após o upgrade.
+- A V12 corrige o salto de exercício da V11. O primeiro exercício de cada empresa pode começar em qualquer ano válido. Cada cadastro seguinte deve usar o maior ano mais um, até 9999. A identidade temporal e empresarial é imutável. A exclusão exige que o exercício seja o último, esteja aberto e esteja sem períodos e sem vínculo de continuidade, preservadas as chaves estrangeiras. Em calendários legados com salto, cadastro, exclusão e fechamento anual informam os anos ausentes e exigem regularização administrativa. A migração conserva o legado.
+- Cadastro e fechamento anual compartilham o bloqueio transacional por empresa em `READ COMMITTED`. O maior ano é lido depois de adquirir o bloqueio. O fechamento o adquire antes de consultar o sucessor e bloquear os períodos e exercícios de origem e destino. A criação de períodos usa o bloqueio do exercício. Operações patrimoniais bloqueiam o calendário e consultam exercícios futuros em ordem cronológica antes de bloquear ativo, contas e sequência. A exclusão já detém o bloqueio da linha e, pela V12, falha com `55P03` se o bloqueio da empresa estiver ocupado. Essa proteção foi conferida no código. Os testes demonstraram as duas ordens entre cadastro e fechamento, com criação ou reutilização de sucessor único e transporte sem duplicação, e as duas ordens entre pedidos de anos consecutivos e não consecutivos.
+- O PostgreSQL protege a sequência anual, o calendário estrutural e o vínculo das apropriações positivas. Os serviços verificam meses anteriores abertos, depreciação pendente e continuidade patrimonial da V7. Escritas SQL diretas com permissões suficientes ainda podem reabrir status ou alterar vínculos de continuidade. Transações externas que agrupem operações devem conservar a ordem dos bloqueios, adquirindo o bloqueio anual antes de bloquear linhas do calendário quando forem encerrar um exercício. A regularização administrativa de calendários legados segue pendente.
 
 ## 4. Ambiente de execução
 
@@ -261,11 +282,11 @@ O padrão é `.\mvnw.cmd -o clean test`. Use `-Online` quando for necessário ob
 
 O script verifica variáveis e arquivos locais que podem sobrescrever a execução, solicita a senha de `lex_test_runner` no terminal e exige a resposta `lex_test|lex_test_runner|5432|f` do `psql` antes de iniciar o Maven. `PGPASSWORD` é removida logo após a consulta e `TEST_DB_*` é limpo ao final, inclusive em caso de falha. Consulte `$LASTEXITCODE` para o resultado da execução e confira o destino nos logs do Spring e do Flyway.
 
-O modo padrão do script foi validado nas suítes de 68, 87, 92, 97, 105, 110, 116, 121, 133, 141, 148 e 154 testes. Para JUnit no IntelliJ, use `TEST_DB_*` nas configurações locais All in lex e LexApplicationTests. A atualização dessas configurações ainda não foi confirmada. Uma IDE já aberta não herda variáveis de um novo terminal.
+O modo padrão do script foi validado nas suítes de 68, 87, 92, 97, 105, 110, 116, 121, 133, 141, 148, 154 e 166 testes. Para JUnit no IntelliJ, use `TEST_DB_*` nas configurações locais All in lex e LexApplicationTests. A atualização dessas configurações ainda não foi confirmada. Uma IDE já aberta não herda variáveis de um novo terminal.
 
 ## 5. Próxima etapa e contingência frontend — 27/11/2026
 
-O desenvolvedor decidiu continuar a sessão de 27/11/2026 até concluir e validar o **incremento 8B — Depreciação linear**, a próxima etapa. A base é o cadastro patrimonial da seção 3 e a suíte de 154 testes da seção 2.
+O 8B está apto para commit após a validação da V12. A sessão de desenvolvimento será encerrada após a publicação do incremento por commit e push. A próxima etapa prevista é a consolidação operacional e a preparação da conclusão do backend, conforme o cronograma e os requisitos acadêmicos vigentes.
 
 **Regra da escrituração efetiva.** Lançamentos `CONFIRMADOS`, inclusive os estornos confirmados, e lançamentos originais `ESTORNADOS` integram a escrituração. Cada um produz efeitos na sua própria data contábil, respeitado o corte do relatório. Lançamentos em `RASCUNHO` ficam fora dos saldos. O original e seu estorno podem produzir efeitos em períodos diferentes.
 
@@ -279,8 +300,8 @@ O manual PDF acadêmico 1.0, de outubro de 2026, é a referência normativa da i
 
 - P0 — Implementar o estorno operacional auditável, com reversão conjunta do estoque e da escrituração.
 - Importar lotes iniciais e implementar a conciliação geral com o Razão para saldos externos ou importados. Conciliar os saldos contábeis de abertura com os controles operacionais de estoque e ativos, evitando lançamentos duplicados.
-- P0 — Implementar a depreciação linear mensal e integrar ao fechamento as verificações operacionais de estoque e ativos. [Decisões e cronograma](decisoes-e-cronograma.md).
-- Registrar posteriormente a disponibilidade para uso de bens adquiridos sem data, com trilha de auditoria. Modelar a baixa patrimonial e o estorno operacional da aquisição. Conciliar bens e saldos patrimoniais importados antes da escrituração operacional correspondente.
+- P0 — Consolidar as verificações operacionais de estoque e ativos e preparar a conclusão do backend. A regularização administrativa de calendários históricos com lacunas permanece pendente. [Decisões e cronograma](decisoes-e-cronograma.md).
+- Modelar a baixa patrimonial e o estorno operacional da aquisição e da depreciação. Conciliar bens e saldos patrimoniais importados antes da escrituração operacional correspondente.
 - Implementar uma operação autorizada, transacional e auditável para cancelar ou excluir rascunhos manuais.
 - Definir a regularização de contas inativas com saldos relevantes antes de encerrar ou transportar seus valores.
 - Implementar a auditoria geral dos fluxos. Os eventos do fechamento, da continuidade, das compras, das vendas e das aquisições patrimoniais já são registrados localmente.
@@ -315,5 +336,8 @@ O manual PDF acadêmico 1.0, de outubro de 2026, é a referência normativa da i
 - 27/11: incremento 7A concluído e publicado em `23ed409`, com estrutura de estoque e avaliação PEPS. A V8 foi validada e a suíte aprovou 141 testes.
 - 27/11: incremento 7B concluído e validado com contabilização de compras e vendas PEPS, auditoria transacional e 148 testes aprovados. Encerrada a sessão da madrugada. Próxima etapa definida como 8A — Controle de ativos.
 - 27/11 — Incremento 7B publicado em `a98a22e`. Incremento 8A concluído e validado com controle patrimonial, aquisição contabilizada, V9 e 154 testes aprovados. O desenvolvedor decidiu prosseguir na sessão até a validação do 8B.
+- 27/11 — Incremento 8A publicado em `b7684c4`. O 8B entregou apropriação individual e coletiva, disponibilidade posterior, integração com fechamento e V10. A suíte aprovou 166 testes. A revisão final identificou uma lacuna de calendário que impede a publicação.
+- 27/11 — A V11 corrigiu o cadastro retroativo de competências e a suíte aprovou 174 testes. A revisão consolidada identificou o bloqueio de continuidade quando o cadastro salta o sucessor imediato. O 8B permanece na árvore de trabalho.
+- 27/11 — A V12 corrigiu a sequência anual. A suíte aprovou 179 testes e a revisão considerou o 8B tecnicamente concluído e apto para commit. Publicação pendente.
 
 Fontes consultadas incluem o planejamento de 22/11, os registros de desenvolvimento fornecidos pelo desenvolvedor e os relatórios Surefire locais conferidos em 27/11.
