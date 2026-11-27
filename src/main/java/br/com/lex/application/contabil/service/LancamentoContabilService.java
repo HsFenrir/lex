@@ -352,6 +352,21 @@ public class LancamentoContabilService {
         }
     }
 
+    void validarAcessoOperacional(UUID empresaId, UUID usuarioId) {
+        buscarUsuarioAtivo(usuarioId);
+        buscarEmpresaAutorizada(empresaId, usuarioId);
+    }
+
+    void validarDestinoOperacional(UUID empresaId, UUID usuarioId, UUID exercicioId, UUID periodoId, LocalDate data) {
+        Usuario usuario = buscarUsuarioAtivo(usuarioId);
+        Empresa empresa = buscarEmpresaAutorizada(empresaId, usuarioId);
+        ExercicioContabil exercicio = buscarExercicio(empresaId, exercicioId);
+        PeriodoContabil periodo = buscarPeriodo(empresaId, exercicioId, periodoId);
+        bloquearEValidarDestino(exercicio, periodo, empresa, usuario, data);
+        validarContinuidade(empresaId, exercicio);
+        validarDataDaMigracao(empresaId, exercicioId, data);
+    }
+
     private void bloquearEValidarDestino(
             ExercicioContabil exercicio, PeriodoContabil periodo, Empresa empresa, Usuario usuario, LocalDate data
     ) {
@@ -391,8 +406,12 @@ public class LancamentoContabilService {
         // Em READ COMMITTED, esta instrução vê a abertura confirmada enquanto o UPSERT aguardava a sequência.
         // Com snapshot fixo, o PostgreSQL rejeita a atualização concorrente da sequência se ela mudou fora do snapshot.
         // ABERTURA identifica a migração na V6. O transporte futuro deve ter identificação própria.
-        lancamentoRepository.buscarDataAberturaMigracao(lancamento.getEmpresaId(), lancamento.getExercicioId())
-                .filter(lancamento.getData()::isBefore)
+        validarDataDaMigracao(lancamento.getEmpresaId(), lancamento.getExercicioId(), lancamento.getData());
+    }
+
+    private void validarDataDaMigracao(UUID empresaId, UUID exercicioId, LocalDate dataContabil) {
+        lancamentoRepository.buscarDataAberturaMigracao(empresaId, exercicioId)
+                .filter(dataContabil::isBefore)
                 .ifPresent(data -> {
                     throw new IllegalStateException("A data contábil não pode ser anterior à abertura de migração em " + data + ".");
                 });
