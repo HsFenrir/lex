@@ -1,10 +1,11 @@
 # LEX — Andamento e passagem de contexto
 
-Atualização em 27/11/2026, no encerramento da sessão da madrugada, após a validação do incremento 7B de contabilização integrada do estoque PEPS. Apresentação em 30/11/2026.
+Atualização em 27/11/2026, após a validação do incremento 8A de controle patrimonial. Apresentação em 30/11/2026.
 
 ## 1. Base verificada
 
 - O 6E foi concluído e publicado em `d2ca25a`, com a estratégia de contingência frontend e os atributos para arquivos binários. O 7A foi concluído e publicado em `23ed409`, com a estrutura de estoque PEPS e a V8. Na revisão do 7B, `HEAD` e a referência local `origin/main` apontavam para `23ed409`. O 7B foi concluído e validado na árvore de trabalho.
+- O 7B foi publicado em `a98a22e`, checkpoint de `HEAD` e da referência local `origin/main` na revisão do 8A. O 8A foi concluído e validado na árvore de trabalho, com aquisição patrimonial integrada e schema V9.
 - Incremento 4C publicado em `677d725`. Incremento 5A publicado em `d82f341` (`feat: implement trial balance and hierarchical account aggregation`), com seis arquivos, 512 inserções e nove exclusões. Incremento 5B publicado em `37d2da4`. Incremento 4D publicado em `bba714b`. Os incrementos 6A a 6C foram publicados em `597f34e`. O 6D entregou o planejamento da integração web.
 - As metas de 25/11 foram integralmente concluídas. Os serviços de Livro Diário e Livro Razão foram antecipados em relação às atividades previstas para 26/11.
 - AGENTS.md e documentação inicial publicados em 9d41a94. Incremento 1 publicado em 54a4b39, script de testes em 9fbd7d1, escopo acadêmico confirmado em 1bf3fbc e incremento 2 publicado em 47cf2a8.
@@ -27,11 +28,14 @@ A execução do desenvolvedor após a correção do teste do 7A terminou em 27/1
 
 No 7B, o desenvolvedor executou `.\scripts\test.ps1`. A execução terminou em 27/11/2026 às 01:41:24 (UTC−03:00), em 01:21 min, com `BUILD SUCCESS`, PostgreSQL 18.4 e schema V8. Foram compiladas 56 fontes principais e 16 fontes de teste. Os 16 relatórios Surefire confirmam **148 testes aprovados, zero falhas, zero erros e zero ignorados**. `EstoqueServiceTest` aprovou 15 casos, incluindo os sete novos e os oito do 7A. Os 141 testes anteriores foram preservados. Os 15 nomes de casos no Surefire coincidem com os métodos atuais. As classes dos seis arquivos do 7B foram compiladas entre 01:40:13 e 01:40:19, depois das últimas alterações nas fontes e antes da geração dos relatórios, entre 01:40:52 e 01:41:24. V1–V8 coincidem com o checkpoint `23ed409` e com as cópias em `target/classes`.
 
+No 8A, a execução do desenvolvedor terminou em 27/11/2026 às 02:06:50 (UTC−03:00), em 01:32 min, com `BUILD SUCCESS`, PostgreSQL 18.4 e schema V9. Foram compiladas 61 fontes principais e 17 fontes de teste. Os 17 relatórios Surefire confirmam **154 testes aprovados, zero falhas, zero erros e zero ignorados**, incluindo os seis de `AtivoPatrimonialServiceTest` e os 148 anteriores. Os seis casos coincidem com os métodos atuais. As classes do 8A foram compiladas entre 02:05:28 e 02:05:33, após as últimas alterações nas fontes e antes dos relatórios, gravados de 02:06:10 a 02:06:50. Os relatórios registram instalação desde V1 e upgrade de V8 para V9. V1–V8 coincidem com o checkpoint `a98a22e` e a V9 tem o mesmo SHA-256 da cópia em `target/classes`.
+
 A suíte do incremento 6 usou o perfil `test` no PostgreSQL 18.4 em `jdbc:postgresql://127.0.0.1:5432/lex_test`. Foram validadas sete migrations, com o schema `public` na V7 e 28 schemas descartáveis. A execução anterior aplicou a V7 sobre o `public` que estava na V6. A suíte cobre também o upgrade com exercício legado em schema descartável e a instalação desde a V1. Os testes aguardam o encerramento das threads com timeout e removem os schemas em `finally`. O script exige a role `lex_test_runner` e a ausência de privilégio `CONNECT` em `lex_dev` antes de iniciar o Maven.
 
-| Classe | Testes aprovados no 7B |
+| Classe | Testes aprovados no 8A |
 |---|---:|
 | AberturaContabilServiceTest | 13 |
+| AtivoPatrimonialServiceTest | 6 |
 | BalanceteServiceTest | 5 |
 | EstornoLancamentoContabilServiceTest | 19 |
 | FechamentoContabilServiceTest | 12 |
@@ -47,7 +51,7 @@ A suíte do incremento 6 usou o perfil `test` no PostgreSQL 18.4 em `jdbc:postgr
 | PartidaContabilRepositoryTest | 5 |
 | PlanoContasRepositoryTest | 1 |
 | LexApplicationTests | 1 |
-| Total | 148 |
+| Total | 154 |
 
 Os cenários negativos incluem violações esperadas das chaves estrangeiras `fk_conta_pai` e `fk_conta_reduzida` e das regras de unicidade `uq_lancamento_estorno_unico` e `uq_lancamento_numero_empresa_exercicio`. Os testes respectivos passaram. A colisão de número foi provocada após a alocação para verificar que o lançamento permanece em rascunho e a atualização do contador é revertida.
 
@@ -59,7 +63,7 @@ Na validação do incremento 1, em 25/11 às 01:46:32 (UTC−03:00), `.\mvnw.cmd
 
 | Área | Estado |
 |---|---|
-| Usuário, empresa, auditoria | Titularidade validada nos serviços. Fechamento, continuidade, compras e vendas têm auditoria localizada. Autenticação e auditoria geral seguem pendentes. |
+| Usuário, empresa, auditoria | Titularidade validada nos serviços. Fechamento, continuidade, compras, vendas e aquisições patrimoniais têm auditoria localizada. Autenticação e auditoria geral seguem pendentes. |
 | Plano de contas | Modelo, contas, serviço e repositórios existentes; testes aprovados. |
 | Exercício/período | Entidades, repositórios e constraints existentes. |
 | Lançamento/partida | Entidades e repositórios, mapeamentos compostos e testes de persistência aprovados. |
@@ -72,6 +76,7 @@ Na validação do incremento 1, em 25/11 às 01:46:32 (UTC−03:00), `.\mvnw.cmd
 | Balanço Patrimonial e DRE | Incremento 5B validado. Emissão por data-base e intervalo, respectivamente. |
 | Fechamento e continuidade | Incrementos 6A, 6B e 6C validados na camada contábil. Integração com os módulos operacionais pendente. |
 | Estoque PEPS | 7A e 7B validados. Cadastro, consultas, lotes, alocações PEPS e contabilização de compras e vendas disponíveis. |
+| Controle patrimonial | 8A validado. Aquisição contabilizada, consulta e listagem por empresa disponíveis. Apropriação mensal prevista no 8B. |
 | API/frontend | Spring MVC e Thymeleaf como dependências. Controllers, autenticação e telas pendentes. O 6D planejou 36 rotas HTTP, com 16 serviços disponíveis e 20 operações dependentes de implementação adicional. |
 
 ### Arquivos e contratos do incremento 1
@@ -224,6 +229,16 @@ Os testes do 7A usam partidas de fixture para satisfazer o vínculo obrigatório
 - Os testes validaram compras e vendas à vista e a prazo, consumo de múltiplos lotes, receita e CMV, saldo de estoque no Diário, Razão, Balancete e BP, resultado na DRE e transporte do saldo contábil com consumo do mesmo lote no exercício seguinte. A reconciliação foi demonstrada em cenários sem estoque externo ou importado. As vendas concorrentes disputam o bloqueio do produto, e a venda sem saldo após a confirmação da primeira é rejeitada.
 - Na escrita direta, o trigger diferido da V8 verifica empresa, exercício, período, data, origem e estado do lançamento ao inserir ou atualizar o movimento. A composição das partidas, a equivalência monetária com os lotes e a prevenção do uso do mesmo lançamento por vários movimentos ficam fora dessa garantia. O contrato público vincula apenas o lançamento que ele próprio criou. V1–V8 foram preservadas.
 
+### Contratos e garantias do incremento 8A
+
+- `AtivoPatrimonialService.registrarAquisicao(AquisicaoAtivo)` registra o bem e confirma a aquisição. `consultar(empresaId, usuarioId, ativoId)` e `listar(empresaId, usuarioId)` exigem titularidade e retornam fichas imutáveis. `FichaAtivo` reúne identificação, valores, contas, situação da disponibilidade e referência do lançamento original com exercício e número contábil.
+- A aquisição debita uma conta analítica devedora do Imobilizado e credita Caixa Geral, Bancos Conta Movimento, Fornecedores Nacionais ou Fornecedores de Longo Prazo. O serviço usa as referências do modelo padrão no plano da empresa e valida as contas ativas e analíticas. Para ativo depreciável, exige uma única redutora credora vinculada à conta patrimonial e a escolha explícita entre despesa comercial (`6.1.005`) e administrativa (`6.2.006`). Terrenos são tratados como não depreciáveis, com vida útil e contas de depreciação ausentes.
+- Custo e residual usam `BigDecimal` com centavos exatos. O custo é positivo e o residual pode variar de zero ao custo. O cadastro mantém a base depreciável como custo menos residual, a vida útil positiva em meses e a data de disponibilidade igual ou posterior à aquisição. A data pode ficar ausente. A situação da ficha indica se a disponibilidade foi registrada, sem inferir que o bem já está em uso. A apropriação linear mensal e a operação para registrar a disponibilidade posteriormente seguem pendentes.
+- A V9 cria `ativo_patrimonial`, garante unicidade do código por empresa e impede que dois ativos compartilhem o mesmo lançamento de aquisição. As chaves compostas mantêm plano, contas e lançamento no escopo da empresa. As restrições verificam valores, datas e campos de depreciação. Ao inserir ou atualizar o ativo, um trigger diferido exige no commit um lançamento `ATIVO` confirmado com empresa, plano, data e usuário compatíveis. A autorização do titular, a classificação das contas e a correspondência das partidas ao custo são garantias do serviço. Alterações diretas apenas no lançamento ficam fora da verificação desse trigger.
+- A aquisição usa uma transação `READ COMMITTED`, com bloqueios de período, exercício, empresa e usuário, reserva do código patrimonial, bloqueio das contas por ID, lançamento novo e sequência. O núcleo contábil valida o calendário, a abertura de migração e a continuidade. A auditoria `AQUISICAO` registra usuário, empresa, ativo, lançamento, datas e valores na mesma transação. Os testes verificaram rollback após confirmação e auditoria, disputa concorrente pelo código patrimonial e bloqueio do estorno genérico.
+- Os testes reconciliaram as aquisições com Diário, Razão, Balancete e BP. Na continuidade patrimonial, o saldo passa ao exercício seguinte por abertura contábil e o ativo conserva o cadastro e o lançamento de aquisição originais. A conciliação de saldos patrimoniais importados segue pendente.
+- Após a primeira execução, as asserções de constraints passaram a validar a `PSQLException`, o SQLState e `ServerErrorMessage.getConstraint()`. O vínculo obrigatório usa `23514` e `ck_ativo_patrimonial_contabilizado`. A duplicidade simples e concorrente usa `23505` e `uq_ativo_patrimonial_codigo`. Esse padrão deve ser usado no 8B para identificar constraints específicas.
+
 ## 4. Ambiente de execução
 
 | Perfil | JDBC | Role | Variáveis |
@@ -246,11 +261,11 @@ O padrão é `.\mvnw.cmd -o clean test`. Use `-Online` quando for necessário ob
 
 O script verifica variáveis e arquivos locais que podem sobrescrever a execução, solicita a senha de `lex_test_runner` no terminal e exige a resposta `lex_test|lex_test_runner|5432|f` do `psql` antes de iniciar o Maven. `PGPASSWORD` é removida logo após a consulta e `TEST_DB_*` é limpo ao final, inclusive em caso de falha. Consulte `$LASTEXITCODE` para o resultado da execução e confira o destino nos logs do Spring e do Flyway.
 
-O modo padrão do script foi validado nas suítes de 68, 87, 92, 97, 105, 110, 116, 121, 133, 141 e 148 testes. Para JUnit no IntelliJ, use `TEST_DB_*` nas configurações locais All in lex e LexApplicationTests. A atualização dessas configurações ainda não foi confirmada. Uma IDE já aberta não herda variáveis de um novo terminal.
+O modo padrão do script foi validado nas suítes de 68, 87, 92, 97, 105, 110, 116, 121, 133, 141, 148 e 154 testes. Para JUnit no IntelliJ, use `TEST_DB_*` nas configurações locais All in lex e LexApplicationTests. A atualização dessas configurações ainda não foi confirmada. Uma IDE já aberta não herda variáveis de um novo terminal.
 
 ## 5. Próxima etapa e contingência frontend — 27/11/2026
 
-A sessão de desenvolvimento da madrugada de 27/11/2026 foi encerrada após a validação do 7B. A próxima etapa é o **incremento 8A — Controle de ativos**. Na retomada, usar os contratos da seção 3 e a suíte de 148 testes da seção 2 como base.
+O desenvolvedor decidiu continuar a sessão de 27/11/2026 até concluir e validar o **incremento 8B — Depreciação linear**, a próxima etapa. A base é o cadastro patrimonial da seção 3 e a suíte de 154 testes da seção 2.
 
 **Regra da escrituração efetiva.** Lançamentos `CONFIRMADOS`, inclusive os estornos confirmados, e lançamentos originais `ESTORNADOS` integram a escrituração. Cada um produz efeitos na sua própria data contábil, respeitado o corte do relatório. Lançamentos em `RASCUNHO` ficam fora dos saldos. O original e seu estorno podem produzir efeitos em períodos diferentes.
 
@@ -264,10 +279,11 @@ O manual PDF acadêmico 1.0, de outubro de 2026, é a referência normativa da i
 
 - P0 — Implementar o estorno operacional auditável, com reversão conjunta do estoque e da escrituração.
 - Importar lotes iniciais e implementar a conciliação geral com o Razão para saldos externos ou importados. Conciliar os saldos contábeis de abertura com os controles operacionais de estoque e ativos, evitando lançamentos duplicados.
-- P0 — Implementar o controle de ativos e a depreciação linear e integrar ao fechamento as verificações operacionais de estoque e ativos. A continuidade patrimonial do estoque regular já foi validada no 7B. [Decisões e cronograma](decisoes-e-cronograma.md).
+- P0 — Implementar a depreciação linear mensal e integrar ao fechamento as verificações operacionais de estoque e ativos. [Decisões e cronograma](decisoes-e-cronograma.md).
+- Registrar posteriormente a disponibilidade para uso de bens adquiridos sem data, com trilha de auditoria. Modelar a baixa patrimonial e o estorno operacional da aquisição. Conciliar bens e saldos patrimoniais importados antes da escrituração operacional correspondente.
 - Implementar uma operação autorizada, transacional e auditável para cancelar ou excluir rascunhos manuais.
 - Definir a regularização de contas inativas com saldos relevantes antes de encerrar ou transportar seus valores.
-- Implementar a auditoria geral dos fluxos. Os eventos do fechamento, da continuidade, das compras e das vendas já são registrados localmente.
+- Implementar a auditoria geral dos fluxos. Os eventos do fechamento, da continuidade, das compras, das vendas e das aquisições patrimoniais já são registrados localmente.
 - Concluir API, autenticação, interface web, PDFs, implantação e manual e executar a validação ponta a ponta.
 - A correção após estorno da abertura deve permanecer possível por meio de lançamentos contábeis apropriados e rastreáveis.
 - A continuidade patrimonial deve distinguir a abertura manual de migração da abertura automatizada de exercícios subsequentes, evitando duplicidade entre o transporte e os lançamentos de abertura.
@@ -298,5 +314,6 @@ O manual PDF acadêmico 1.0, de outubro de 2026, é a referência normativa da i
 - 27/11: documentação consolidada publicada em `b702b72`. Incremento 6E concluído e publicado em `d2ca25a`, com os planos A e B, o tratamento binário de PDF e PNG e a antecipação do 7A.
 - 27/11: incremento 7A concluído e publicado em `23ed409`, com estrutura de estoque e avaliação PEPS. A V8 foi validada e a suíte aprovou 141 testes.
 - 27/11: incremento 7B concluído e validado com contabilização de compras e vendas PEPS, auditoria transacional e 148 testes aprovados. Encerrada a sessão da madrugada. Próxima etapa definida como 8A — Controle de ativos.
+- 27/11 — Incremento 7B publicado em `a98a22e`. Incremento 8A concluído e validado com controle patrimonial, aquisição contabilizada, V9 e 154 testes aprovados. O desenvolvedor decidiu prosseguir na sessão até a validação do 8B.
 
 Fontes consultadas incluem o planejamento de 22/11, os registros de desenvolvimento fornecidos pelo desenvolvedor e os relatórios Surefire locais conferidos em 27/11.
