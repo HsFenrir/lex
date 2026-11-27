@@ -2,6 +2,10 @@ package br.com.lex.application.contabil.service;
 
 import br.com.lex.application.contabil.dto.AberturaContabil;
 import br.com.lex.application.contabil.dto.AberturaContabil.SaldoPorConta;
+import br.com.lex.application.contabil.dto.Dre.Rubrica;
+import br.com.lex.application.contabil.dto.LivroDiario;
+import br.com.lex.application.contabil.dto.OperacaoEstoque;
+import br.com.lex.application.contabil.dto.OperacaoEstoqueConfirmada;
 import br.com.lex.application.contabil.service.EstoqueService.Contexto;
 import br.com.lex.application.contabil.service.EstoqueService.Ficha;
 import br.com.lex.application.contabil.service.EstoqueService.Saida;
@@ -10,6 +14,7 @@ import br.com.lex.domain.contabil.entity.ExercicioContabil;
 import br.com.lex.domain.contabil.entity.PeriodoContabil;
 import br.com.lex.domain.contabil.entity.Usuario;
 import br.com.lex.domain.contabil.enums.OrigemLancamento;
+import br.com.lex.domain.contabil.enums.StatusLancamento;
 import br.com.lex.domain.contabil.enums.TipoPartida;
 import br.com.lex.domain.contabil.repository.ContaContabilRepository;
 import br.com.lex.domain.contabil.repository.MovimentoEstoqueRepository.Alocacao;
@@ -43,6 +48,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.BiConsumer;
+import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -59,12 +65,20 @@ class EstoqueServiceTest {
     private static final String ESTOQUE = "1.1.03.001";
     private static final String RECEITA = "4.1.001";
     private static final String CMV = "5.1.001";
+    private static final String BANCOS = "1.1.01.002";
+    private static final String CLIENTES = "1.1.02.001";
+    private static final String FORNECEDORES = "2.1.01.001";
 
     @Autowired private EstoqueService estoque;
     @Autowired private LancamentoContabilService lancamentos;
     @Autowired private PlanoContasService planos;
     @Autowired private ContaContabilRepository contas;
     @Autowired private FechamentoContabilService fechamento;
+    @Autowired private LivroDiarioService diario;
+    @Autowired private LivroRazaoService razao;
+    @Autowired private BalanceteService balancete;
+    @Autowired private BalancoPatrimonialService balanco;
+    @Autowired private DreService dre;
     @Autowired private EntityManager em;
     @Autowired private JdbcTemplate jdbc;
     @Autowired private DataSource dataSource;
@@ -210,28 +224,42 @@ class EstoqueServiceTest {
 
     @Test
     void duasSaidasConcorrentesNaoConsomemAsMesmasUnidades() {
+        conferirConcorrencia(c -> entrada(c, DATA, "5", "3.00"),
+                (c, quantidade) -> saida(c, DATA, quantidade).movimento().valorTotal());
+    }
+
+    @Test
+    void duasVendasConcorrentesConfirmamSomenteAQueTemSaldo() {
+        conferirConcorrencia(c -> estoque.registrarCompra(operacao(c, DATA, "5", "3", CAIXA)),
+                (c, quantidade) -> estoque.registrarVenda(operacao(c, DATA, quantidade, "5", CAIXA)).custoEstoque());
+    }
+
+    private void conferirConcorrencia(Consumer<Cenario> comprar, BiFunction<Cenario, String, BigDecimal> vender) {
         comCenario((schema, c) -> {
-            executar(schema, () -> entrada(c, DATA, "5", "3.00"));
+            executar(schema, () -> {
+                comprar.accept(c);
+                return null;
+            });
             var executor = Executors.newFixedThreadPool(2);
             var pidPrimeira = new CompletableFuture<Integer>();
             var pidSegunda = new CompletableFuture<Integer>();
             var liberarCommit = new CountDownLatch(1);
             try {
                 var primeira = executor.submit(() -> executar(schema, () -> {
-                    Saida saida = saida(c, DATA, "4");
+                    BigDecimal custo = vender.apply(c, "4");
                     pidPrimeira.complete(pid());
                     aguardar(liberarCommit);
-                    return saida;
+                    return custo;
                 }));
                 int bloqueadora = pidPrimeira.get(10, TimeUnit.SECONDS);
                 var segunda = executor.submit(() -> executar(schema, () -> {
                     pidSegunda.complete(pid());
-                    return saida(c, DATA, "4");
+                    return vender.apply(c, "4");
                 }));
                 aguardarBloqueio(bloqueadora, pidSegunda.get(5, TimeUnit.SECONDS));
                 liberarCommit.countDown();
 
-                assertThat(primeira.get(10, TimeUnit.SECONDS).movimento().valorTotal()).isEqualByComparingTo("12.00");
+                assertThat(primeira.get(10, TimeUnit.SECONDS)).isEqualByComparingTo("12.00");
                 assertThatThrownBy(() -> segunda.get(10, TimeUnit.SECONDS))
                         .isInstanceOf(ExecutionException.class).hasRootCauseMessage("Estoque insuficiente para a saída.");
                 Ficha finalizada = executar(schema, () -> ficha(c));
@@ -240,6 +268,8 @@ class EstoqueServiceTest {
                 assertThat(finalizada.saldo().valor()).isEqualByComparingTo("3.00");
                 assertThat(executar(schema, () -> jdbc.queryForObject(
                         "select count(*) from alocacao_estoque", Long.class))).isEqualTo(1L);
+                assertThat(executar(schema, () -> jdbc.queryForObject(
+                        "select ultimo_numero from sequencia_lancamento", Long.class))).isEqualTo(2L);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new AssertionError(e);
@@ -256,6 +286,242 @@ class EstoqueServiceTest {
                 }
             }
         });
+    }
+
+    @Test
+    void escrituraComprasEVendasEReconciliaLivrosEDemonstracoes() {
+        comCenario((schema, c) -> {
+            var compraVista = executar(schema, () -> estoque.registrarCompra(operacao(c, DATA, "3", "2", CAIXA)));
+            var compraPrazo = executar(schema, () -> estoque.registrarCompra(operacao(c, DATA, "4", "5", FORNECEDORES)));
+            var vendaVista = executar(schema, () -> estoque.registrarVenda(operacao(c, DATA, "4", "9", BANCOS)));
+            var vendaPrazo = executar(schema, () -> estoque.registrarVenda(operacao(c, DATA, "1", "10", CLIENTES)));
+            executar(schema, () -> {
+                var livro = diario.emitir(c.empresa(), c.usuario(), c.exercicio(), DATA, DATA);
+                assertThat(livro.lancamentos()).hasSize(4);
+                conferirLancamento(c, livro.lancamentos().get(0), compraVista, 1, "3", "6", "6",
+                        partida(c, ESTOQUE, TipoPartida.DEBITO, new BigDecimal("6.00")),
+                        partida(c, CAIXA, TipoPartida.CREDITO, new BigDecimal("6.00")));
+                conferirLancamento(c, livro.lancamentos().get(1), compraPrazo, 2, "4", "20", "20",
+                        partida(c, ESTOQUE, TipoPartida.DEBITO, new BigDecimal("20.00")),
+                        partida(c, FORNECEDORES, TipoPartida.CREDITO, new BigDecimal("20.00")));
+                conferirLancamento(c, livro.lancamentos().get(2), vendaVista, 3, "4", "36", "11",
+                        partida(c, BANCOS, TipoPartida.DEBITO, new BigDecimal("36.00")),
+                        partida(c, RECEITA, TipoPartida.CREDITO, new BigDecimal("36.00")),
+                        partida(c, CMV, TipoPartida.DEBITO, new BigDecimal("11.00")),
+                        partida(c, ESTOQUE, TipoPartida.CREDITO, new BigDecimal("11.00")));
+                conferirLancamento(c, livro.lancamentos().get(3), vendaPrazo, 4, "1", "10", "5",
+                        partida(c, CLIENTES, TipoPartida.DEBITO, new BigDecimal("10.00")),
+                        partida(c, RECEITA, TipoPartida.CREDITO, new BigDecimal("10.00")),
+                        partida(c, CMV, TipoPartida.DEBITO, new BigDecimal("5.00")),
+                        partida(c, ESTOQUE, TipoPartida.CREDITO, new BigDecimal("5.00")));
+
+                var alocacoes = estoque.consultarAlocacoes(c.empresa(), c.usuario(), c.produto(), vendaVista.movimentoId());
+                assertThat(alocacoes).extracting(Alocacao::entradaId)
+                        .containsExactly(compraVista.movimentoId(), compraPrazo.movimentoId());
+                conferirAlocacao(alocacoes.get(0), "3", "6");
+                conferirAlocacao(alocacoes.get(1), "1", "5");
+                var alocacaoPrazo = estoque.consultarAlocacoes(c.empresa(), c.usuario(), c.produto(), vendaPrazo.movimentoId());
+                assertThat(alocacaoPrazo).hasSize(1);
+                conferirAlocacao(alocacaoPrazo.getFirst(), "1", "5");
+
+                BigDecimal remanescente = ficha(c).saldo().valor();
+                assertThat(remanescente).isEqualByComparingTo("10");
+                assertThat(razao.emitir(c.empresa(), c.usuario(), c.exercicio(), c.contas().get(ESTOQUE), DATA, DATA)
+                        .saldos().saldoFinal().valor()).isEqualByComparingTo(remanescente);
+                assertThat(balancete.emitir(c.empresa(), c.usuario(), c.exercicio(), DATA, DATA).linhas())
+                        .filteredOn(linha -> linha.conta().id().equals(c.contas().get(ESTOQUE))).singleElement()
+                        .satisfies(linha -> assertThat(linha.saldos().saldoFinal().valor()).isEqualByComparingTo(remanescente));
+                var bp = balanco.emitir(c.empresa(), c.usuario(), c.exercicio(), DATA);
+                assertThat(bp.equilibrado()).isTrue();
+                assertThat(bp.secoes().stream().flatMap(secao -> secao.linhas().stream()))
+                        .filteredOn(linha -> linha.conta().id().equals(c.contas().get(ESTOQUE))).singleElement()
+                        .satisfies(linha -> assertThat(linha.valorApresentado()).isEqualByComparingTo(remanescente));
+                var resultado = dre.emitir(c.empresa(), c.usuario(), c.exercicio(), DATA, DATA);
+                assertThat(resultado.linhas()).filteredOn(linha -> linha.rubrica() == Rubrica.RECEITA_BRUTA)
+                        .singleElement().satisfies(linha -> assertThat(linha.valorDemonstrado()).isEqualByComparingTo("46"));
+                assertThat(resultado.linhas()).filteredOn(linha -> linha.rubrica() == Rubrica.RESULTADO_BRUTO)
+                        .singleElement().satisfies(linha -> assertThat(linha.valorDemonstrado()).isEqualByComparingTo("30"));
+                return null;
+            });
+            assertThatThrownBy(() -> executar(schema, () -> lancamentos.criarRascunhoEstorno(
+                    c.empresa(), c.usuario(), vendaVista.lancamentoId(), c.exercicio(), c.periodo(), DATA, "Estorno")))
+                    .hasMessageContaining("módulo de origem");
+        });
+    }
+
+    private void conferirLancamento(Cenario c, LivroDiario.Lancamento lancamento, OperacaoEstoqueConfirmada operacao,
+                                    long numero, String quantidade, String comercial, String custo, SaldoPorConta... partidas) {
+        assertThat(operacao.numeroContabil()).isEqualTo(numero);
+        assertThat(operacao.quantidade()).isEqualByComparingTo(quantidade);
+        assertThat(operacao.valorComercial()).isEqualByComparingTo(comercial);
+        assertThat(operacao.custoEstoque()).isEqualByComparingTo(custo);
+        assertThat(lancamento.referencia()).isEqualTo(new LivroDiario.ReferenciaLancamento(
+                operacao.lancamentoId(), c.exercicio(), numero));
+        assertThat(lancamento.status()).isEqualTo(StatusLancamento.CONFIRMADO);
+        assertThat(lancamento.origem()).isEqualTo(OrigemLancamento.ESTOQUE);
+        assertThat(lancamento.partidas()).map(p -> new SaldoPorConta(p.contaId(), p.tipo(), p.valor()))
+                .containsExactlyInAnyOrder(partidas);
+        assertThat(jdbc.queryForObject("""
+                select m.lancamento_id from movimento_estoque m join auditoria_evento a on a.entidade_id = m.id
+                where m.id = ? and a.entidade = 'movimento_estoque' and a.empresa_id = ? and a.usuario_id = ?
+                  and a.acao = case m.tipo when 'ENTRADA' then 'COMPRA' else 'VENDA' end
+                  and a.dados_novos->>'lancamentoId' = m.lancamento_id::text
+                  and a.dados_novos->>'numeroContabil' = ?
+                """, UUID.class, operacao.movimentoId(), c.empresa(), c.usuario(), Long.toString(numero)))
+                .isEqualTo(operacao.lancamentoId());
+    }
+
+    @Test
+    void escrituraReceitaComCustoZeroEPreservaCentavoDoLote() {
+        comCenario((schema, c) -> {
+            executar(schema, () -> estoque.registrarCompra(operacao(c, DATA, "3", "0.005", CAIXA)));
+            var primeira = executar(schema, () -> estoque.registrarVenda(operacao(c, DATA, "1", "0.005", CAIXA)));
+            var segunda = executar(schema, () -> estoque.registrarVenda(operacao(c, DATA, "1", "0.005", CAIXA)));
+            var ultima = executar(schema, () -> estoque.registrarVenda(operacao(c, DATA, "1", "0.005", CAIXA)));
+            assertThat(primeira.custoEstoque()).isEqualByComparingTo("0.01");
+            assertThat(ultima.custoEstoque()).isEqualByComparingTo("0.01");
+            executar(schema, () -> {
+                conferirLancamento(c, diario.emitir(c.empresa(), c.usuario(), c.exercicio(), DATA, DATA).lancamentos().get(2),
+                        segunda, 3, "1", "0.01", "0",
+                        partida(c, CAIXA, TipoPartida.DEBITO, new BigDecimal("0.01")),
+                        partida(c, RECEITA, TipoPartida.CREDITO, new BigDecimal("0.01")));
+                assertThat(ficha(c).saldo().valor()).isEqualByComparingTo("0");
+                return null;
+            });
+        });
+    }
+
+    @Test
+    void validaLimiteComercialEDivideCmvAgregadoEmPartidasValidas() {
+        comCenario((schema, c) -> {
+            assertThatThrownBy(() -> executar(schema, () -> estoque.registrarCompra(operacao(c, DATA, "1", "0.004", CAIXA))))
+                    .hasMessageContaining("centavo");
+            assertThatThrownBy(() -> executar(schema, () -> estoque.registrarVenda(operacao(c, DATA, "1", "0.004", CAIXA))))
+                    .hasMessageContaining("positivo");
+            var acimaDoLimite = operacao(c, DATA, "10000000", "10000000000", CAIXA);
+            assertThatThrownBy(() -> executar(schema, () -> estoque.registrarCompra(acimaDoLimite)))
+                    .hasMessageContaining("17 dígitos");
+            assertThatThrownBy(() -> executar(schema, () -> estoque.registrarVenda(acimaDoLimite)))
+                    .hasMessageContaining("17 dígitos");
+            var primeiro = executar(schema, () -> estoque.registrarCompra(
+                    operacao(c, DATA, "10000000", "9999999999.99999999", CAIXA)));
+            var segundo = executar(schema, () -> estoque.registrarCompra(operacao(c, DATA, "1", "1", CAIXA)));
+            var venda = executar(schema, () -> estoque.registrarVenda(operacao(c, DATA, "10000001", "1", CAIXA)));
+            var lancamento = executar(schema, () -> diario.emitir(c.empresa(), c.usuario(), c.exercicio(), DATA, DATA))
+                    .lancamentos().getLast();
+            assertThat(primeiro.numeroContabil()).isEqualTo(1L);
+            assertThat(venda.custoEstoque()).isEqualByComparingTo(primeiro.custoEstoque().add(segundo.custoEstoque()));
+            assertThat(lancamento.partidas()).hasSize(6);
+            assertThat(lancamento.totalDebitos()).isEqualByComparingTo(venda.custoEstoque().add(venda.valorComercial()));
+            assertThat(lancamento.totalCreditos()).isEqualByComparingTo(lancamento.totalDebitos());
+        });
+    }
+
+    @Test
+    void rejeitaContrapartidasEContextosInvalidosEReverteTodaAEscrituracao() {
+        comCenario((schema, c) -> {
+            Cenario outra = executar(schema, this::criarCenario);
+            var compra = executar(schema, () -> estoque.registrarCompra(operacao(c, DATA, "5", "3", CAIXA)));
+            var antes = executar(schema, () -> ficha(c));
+            assertThatThrownBy(() -> executar(schema, () -> estoque.registrarVenda(operacao(c, DATA, "6", "5", CAIXA))))
+                    .hasMessageContaining("insuficiente");
+            assertThatThrownBy(() -> executar(schema, () -> estoque.registrarVenda(operacao(c, DATA, "4", "5", FORNECEDORES))))
+                    .hasMessageContaining("contrapartida");
+            assertThatThrownBy(() -> executar(schema, () -> estoque.registrarCompra(new OperacaoEstoque(
+                    c.empresa(), c.usuario(), c.exercicio(), c.periodo(), c.produto(), DATA, BigDecimal.ONE,
+                    BigDecimal.ONE, "Contra outra empresa", outra.contas().get(CAIXA)))))
+                    .hasMessageContaining("contrapartida");
+            assertThatThrownBy(() -> executar(schema, () -> estoque.registrarCompra(new OperacaoEstoque(
+                    c.empresa(), c.usuario(), c.exercicio(), c.periodo(), outra.produto(), DATA, BigDecimal.ONE,
+                    BigDecimal.ONE, "Produto de outra empresa", c.contas().get(CAIXA)))))
+                    .hasMessageContaining("Produto");
+            assertThatThrownBy(() -> executar(schema, () -> {
+                estoque.registrarCompra(operacao(c, DATA, "2", "2", CAIXA));
+                estoque.registrarVenda(operacao(c, DATA, "4", "5", CAIXA));
+                throw new IllegalStateException("Falha após confirmar e auditar.");
+            })).hasMessageContaining("Falha após confirmar");
+            executar(schema, () -> {
+                assertThat(ficha(c)).isEqualTo(antes);
+                assertThat(jdbc.queryForObject("select count(*) from alocacao_estoque", Long.class)).isZero();
+                assertThat(jdbc.queryForObject("select count(*) from lote_estoque", Long.class)).isEqualTo(1L);
+                assertThat(jdbc.queryForObject("select count(*) from lancamento_contabil", Long.class)).isEqualTo(1L);
+                assertThat(jdbc.queryForObject("select count(*) from partida_contabil", Long.class)).isEqualTo(2L);
+                assertThat(jdbc.queryForObject("select count(*) from auditoria_evento where entidade = 'movimento_estoque'",
+                        Long.class)).isEqualTo(1L);
+                assertThat(jdbc.queryForObject("select ultimo_numero from sequencia_lancamento", Long.class))
+                        .isEqualTo(compra.numeroContabil());
+                return null;
+            });
+        });
+    }
+
+    @Test
+    void conservaLoteESaldoContabilNaContinuidadePatrimonial() {
+        comCenario((schema, c) -> {
+            var compra = executar(schema, () -> estoque.registrarCompra(operacao(c, DATA, "5", "3", FORNECEDORES)));
+            LocalDate janeiro = LocalDate.of(2027, 1, 1);
+            LocalDate dezembro = janeiro.minusDays(1);
+            OperacaoEstoque venda = executar(schema, () -> {
+                em.persist(new PeriodoContabil(em.getReference(ExercicioContabil.class, c.exercicio()),
+                        (short) 12, dezembro.withDayOfMonth(1), dezembro));
+                ExercicioContabil proximo = new ExercicioContabil(em.getReference(Empresa.class, c.empresa()),
+                        (short) 2027, janeiro, janeiro.plusYears(1).minusDays(1));
+                em.persist(proximo);
+                PeriodoContabil primeiroPeriodo = new PeriodoContabil(proximo, (short) 1, janeiro, janeiro.plusDays(30));
+                em.persist(primeiroPeriodo);
+                em.flush();
+                return new OperacaoEstoque(c.empresa(), c.usuario(), proximo.getId(), primeiroPeriodo.getId(),
+                        c.produto(), janeiro, BigDecimal.ONE, new BigDecimal("5"), "Venda após a continuidade",
+                        c.contas().get(CAIXA));
+            });
+            assertThatThrownBy(() -> executar(schema, () -> estoque.registrarVenda(venda)))
+                    .hasMessageContaining("continuidade do exercício anterior");
+            executar(schema, () -> fechamento.encerrarPeriodo(c.empresa(), c.usuario(), c.exercicio(), c.periodo()));
+            var encerramento = executar(schema, () -> fechamento.encerrarExercicio(c.empresa(), c.usuario(), c.exercicio()));
+            assertThat(encerramento.exercicioDestinoId()).isEqualTo(venda.exercicioId());
+            assertThat(encerramento.lancamentoAberturaId()).isNotNull();
+            var confirmada = executar(schema, () -> estoque.registrarVenda(venda));
+            assertThat(confirmada.numeroContabil()).isEqualTo(2L);
+            assertThat(confirmada.custoEstoque()).isEqualByComparingTo("3");
+            executar(schema, () -> {
+                assertThat(estoque.consultarAlocacoes(c.empresa(), c.usuario(), c.produto(), confirmada.movimentoId()))
+                        .extracting(Alocacao::entradaId).containsExactly(compra.movimentoId());
+                BigDecimal saldo = ficha(c).saldo().valor();
+                assertThat(saldo).isEqualByComparingTo("12");
+                assertThat(razao.emitir(c.empresa(), c.usuario(), venda.exercicioId(), c.contas().get(ESTOQUE),
+                        janeiro, janeiro).saldos().saldoFinal().valor()).isEqualByComparingTo(saldo);
+                return null;
+            });
+        });
+    }
+
+    @Test
+    void respeitaMarcoDeMigracaoCalendarioEOrdemDoEstoque() {
+        comCenario((schema, c) -> {
+            executar(schema, () -> lancamentos.registrarSaldosIniciais(new AberturaContabil(
+                    c.empresa(), c.usuario(), c.exercicio(), c.periodo(), DATA, "Migração",
+                    List.of(partida(c, CAIXA, TipoPartida.DEBITO, BigDecimal.ONE),
+                            partida(c, "3.1.001", TipoPartida.CREDITO, BigDecimal.ONE)))));
+            assertThatThrownBy(() -> executar(schema,
+                    () -> estoque.registrarCompra(operacao(c, DATA.minusDays(1), "1", "1", CAIXA))))
+                    .hasMessageContaining("anterior à abertura");
+            assertThatThrownBy(() -> executar(schema,
+                    () -> estoque.registrarCompra(operacao(c, DATA.plusMonths(1), "1", "1", CAIXA))))
+                    .hasMessageContaining("dentro do período");
+            var compra = executar(schema, () -> estoque.registrarCompra(operacao(c, DATA.plusDays(1), "2", "1", CAIXA)));
+            assertThat(compra.numeroContabil()).isEqualTo(2L);
+            assertThatThrownBy(() -> executar(schema, () -> estoque.registrarVenda(operacao(c, DATA, "1", "2", CAIXA))))
+                    .hasMessageContaining("última movimentação");
+            executar(schema, () -> fechamento.encerrarPeriodo(c.empresa(), c.usuario(), c.exercicio(), c.periodo()));
+            assertThatThrownBy(() -> executar(schema,
+                    () -> estoque.registrarVenda(operacao(c, DATA.plusDays(1), "1", "2", CAIXA))))
+                    .hasMessageContaining("período deve estar aberto");
+        });
+    }
+
+    private OperacaoEstoque operacao(Cenario c, LocalDate data, String quantidade, String unitario, String contrapartida) {
+        return new OperacaoEstoque(c.empresa(), c.usuario(), c.exercicio(), c.periodo(), c.produto(), data,
+                new BigDecimal(quantidade), new BigDecimal(unitario), "Movimentação de mercadoria", c.contas().get(contrapartida));
     }
 
     @Test

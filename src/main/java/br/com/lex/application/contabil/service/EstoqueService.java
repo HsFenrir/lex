@@ -1,6 +1,18 @@
 package br.com.lex.application.contabil.service;
 
+import br.com.lex.application.contabil.dto.AberturaContabil.SaldoPorConta;
+import br.com.lex.application.contabil.dto.OperacaoEstoque;
+import br.com.lex.application.contabil.dto.OperacaoEstoqueConfirmada;
+import br.com.lex.domain.contabil.entity.Empresa;
+import br.com.lex.domain.contabil.entity.ExercicioContabil;
+import br.com.lex.domain.contabil.entity.LancamentoContabil;
+import br.com.lex.domain.contabil.entity.PartidaContabil;
+import br.com.lex.domain.contabil.entity.PeriodoContabil;
 import br.com.lex.domain.contabil.entity.ProdutoEstoque;
+import br.com.lex.domain.contabil.entity.Usuario;
+import br.com.lex.domain.contabil.enums.OrigemLancamento;
+import br.com.lex.domain.contabil.enums.TipoPartida;
+import br.com.lex.domain.contabil.repository.ContaContabilRepository;
 import br.com.lex.domain.contabil.repository.MovimentoEstoqueRepository;
 import br.com.lex.domain.contabil.repository.MovimentoEstoqueRepository.Alocacao;
 import br.com.lex.domain.contabil.repository.MovimentoEstoqueRepository.Lote;
@@ -29,8 +41,18 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class EstoqueService {
 
+    // Códigos de referência do modelo padrão versão 1, sem depender do código no plano da empresa.
+    private static final String MERCADORIAS = "1.1.03.001";
+    private static final String RECEITA = "4.1.001";
+    private static final String CMV = "5.1.001";
+    private static final String CAIXA = "1.1.01.001";
+    private static final String BANCOS = "1.1.01.002";
+    private static final List<String> CONTRAPARTIDAS_COMPRA = List.of(CAIXA, BANCOS, "2.1.01.001", "2.2.02.001");
+    private static final List<String> CONTRAPARTIDAS_VENDA = List.of(CAIXA, BANCOS, "1.1.02.001");
+
     private final ProdutoEstoqueRepository produtos;
     private final MovimentoEstoqueRepository movimentos;
+    private final ContaContabilRepository contas;
     private final LancamentoContabilService contabilidade;
     private final EntityManager em;
     private final JdbcTemplate jdbc;
@@ -74,7 +96,84 @@ public class EstoqueService {
         return List.copyOf(movimentos.alocacoes(empresaId, produtoId, saidaId));
     }
 
-    // O 7B chama estes métodos dentro da transação que também confirma o lançamento ESTOQUE.
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public OperacaoEstoqueConfirmada registrarCompra(OperacaoEstoque operacao) {
+        Movimento entrada = registrarEntrada(contexto(operacao), operacao.quantidade(), operacao.valorUnitario());
+        BigDecimal valor = PartidaContabil.normalizarValor(entrada.valorTotal());
+        UUID contrapartida = validarContrapartida(operacao, CONTRAPARTIDAS_COMPRA);
+        UUID mercadorias = resolverConta(operacao.empresaId(), MERCADORIAS);
+        return confirmarOperacao(operacao, entrada, valor, "COMPRA", List.of(
+                new SaldoPorConta(mercadorias, TipoPartida.DEBITO, valor),
+                new SaldoPorConta(contrapartida, TipoPartida.CREDITO, valor)));
+    }
+
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public OperacaoEstoqueConfirmada registrarVenda(OperacaoEstoque operacao) {
+        Contexto contexto = contexto(operacao);
+        BigDecimal quantidade = positivo(operacao.quantidade(), 19, 6, "Quantidade");
+        BigDecimal preco = positivo(operacao.valorUnitario(), 19, 8, "Preço unitário");
+        BigDecimal valor = PartidaContabil.normalizarValor(quantidade.multiply(preco).setScale(2, RoundingMode.HALF_UP));
+        Movimento saida = registrarSaida(contexto, quantidade).movimento();
+        UUID contrapartida = validarContrapartida(operacao, CONTRAPARTIDAS_VENDA);
+        List<SaldoPorConta> partidas = new ArrayList<>();
+        partidas.add(new SaldoPorConta(contrapartida, TipoPartida.DEBITO, valor));
+        partidas.add(new SaldoPorConta(resolverConta(operacao.empresaId(), RECEITA), TipoPartida.CREDITO, valor));
+        if (saida.valorTotal().signum() > 0) {
+            LancamentoContabilService.adicionarSaldoEmPartidas(partidas, resolverConta(operacao.empresaId(), CMV),
+                    TipoPartida.DEBITO, saida.valorTotal());
+            LancamentoContabilService.adicionarSaldoEmPartidas(partidas, resolverConta(operacao.empresaId(), MERCADORIAS),
+                    TipoPartida.CREDITO, saida.valorTotal());
+        }
+        return confirmarOperacao(operacao, saida, valor, "VENDA", partidas);
+    }
+
+    private Contexto contexto(OperacaoEstoque operacao) {
+        if (operacao == null) {
+            throw new IllegalArgumentException("Informe os dados da operação de estoque.");
+        }
+        return new Contexto(operacao.empresaId(), operacao.usuarioId(), operacao.exercicioId(),
+                operacao.periodoId(), operacao.produtoId(), operacao.data());
+    }
+
+    private UUID resolverConta(UUID empresaId, String referencia) {
+        return contas.buscarContaDoModeloPadrao(empresaId, referencia)
+                .orElseThrow(() -> new IllegalStateException("Conta do modelo padrão ausente no plano: " + referencia));
+    }
+
+    private UUID validarContrapartida(OperacaoEstoque operacao, List<String> referencias) {
+        UUID conta = operacao.contrapartidaId();
+        if (conta == null || referencias.stream()
+                .map(referencia -> contas.buscarContaDoModeloPadrao(operacao.empresaId(), referencia))
+                .noneMatch(id -> id.filter(conta::equals).isPresent())) {
+            throw new IllegalArgumentException("Conta de contrapartida incompatível com a operação de estoque.");
+        }
+        return conta;
+    }
+
+    private OperacaoEstoqueConfirmada confirmarOperacao(OperacaoEstoque operacao, Movimento movimento,
+                                                       BigDecimal valor, String acao, List<SaldoPorConta> partidas) {
+        // Calendário, autorização e produto já estão bloqueados. O lançamento é novo e privativo da transação.
+        LancamentoContabil lancamento = contabilidade.escriturarTecnico(
+                em.getReference(Empresa.class, movimento.empresaId()),
+                em.getReference(Usuario.class, movimento.usuarioId()),
+                em.getReference(ExercicioContabil.class, movimento.exercicioId()),
+                em.getReference(PeriodoContabil.class, movimento.periodoId()),
+                movimento.data(), operacao.historico(), OrigemLancamento.ESTOQUE, partidas);
+        vincularLancamento(movimento, lancamento.getId());
+        jdbc.update("""
+                insert into auditoria_evento (empresa_id, usuario_id, entidade, entidade_id, acao, dados_novos)
+                values (?, ?, 'movimento_estoque', ?, ?, jsonb_build_object(
+                    'produtoId', cast(? as uuid), 'dataContabil', cast(? as date),
+                    'lancamentoId', cast(? as uuid), 'numeroContabil', cast(? as bigint),
+                    'quantidade', cast(? as numeric), 'valorComercial', cast(? as numeric),
+                    'custoEstoque', cast(? as numeric)))
+                """, movimento.empresaId(), movimento.usuarioId(), movimento.id(), acao, movimento.produtoId(),
+                movimento.data(), lancamento.getId(), lancamento.getNumero(), movimento.quantidade(), valor,
+                movimento.valorTotal());
+        return new OperacaoEstoqueConfirmada(movimento.id(), lancamento.getId(), lancamento.getNumero(),
+                movimento.quantidade(), valor, movimento.valorTotal());
+    }
+
     @Transactional(propagation = Propagation.MANDATORY)
     Movimento registrarEntrada(Contexto contexto, BigDecimal quantidade, BigDecimal custoUnitario) {
         BigDecimal unidades = positivo(quantidade, 19, 6, "Quantidade");

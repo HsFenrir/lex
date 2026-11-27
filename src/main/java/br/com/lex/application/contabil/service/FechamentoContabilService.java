@@ -43,7 +43,6 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class FechamentoContabilService {
 
-    private static final BigDecimal LIMITE_PARTIDA = new BigDecimal("99999999999999999.99");
     private static final String LUCROS_ACUMULADOS_MODELO_V1 = "3.3.001";
     private static final String PREJUIZOS_ACUMULADOS_MODELO_V1 = "3.3.002";
 
@@ -263,12 +262,7 @@ public class FechamentoContabilService {
             throw new IllegalStateException("Conta inativa com saldo a escriturar no fechamento: " + conta.codigo());
         }
         TipoPartida tipo = saldo.signum() > 0 ? TipoPartida.DEBITO : TipoPartida.CREDITO;
-        BigDecimal restante = saldo.abs();
-        while (restante.signum() > 0) {
-            BigDecimal valor = restante.min(LIMITE_PARTIDA);
-            partidas.add(new SaldoPorConta(conta.id(), tipo, valor));
-            restante = restante.subtract(valor);
-        }
+        LancamentoContabilService.adicionarSaldoEmPartidas(partidas, conta.id(), tipo, saldo.abs());
     }
 
     private void bloquearContas(UUID empresaId, PartidasTecnicas tecnicas) {

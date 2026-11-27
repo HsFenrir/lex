@@ -44,6 +44,7 @@ import java.util.stream.Collectors;
 @Service
 public class LancamentoContabilService {
 
+    private static final BigDecimal LIMITE_PARTIDA = new BigDecimal("99999999999999999.99");
     private static final Set<StatusLancamento> STATUS_ESCRITURADOS =
             Set.of(StatusLancamento.CONFIRMADO, StatusLancamento.ESTORNADO);
 
@@ -152,6 +153,15 @@ public class LancamentoContabilService {
     private ContaContabil buscarContaDoLancamento(LancamentoContabil lancamento, UUID contaId) {
         return contaRepository.findByIdAndPlanoContasId(contaId, lancamento.getPlanoContasId())
                 .orElseThrow(() -> new IllegalArgumentException("Conta não encontrada no plano do lançamento."));
+    }
+
+    static void adicionarSaldoEmPartidas(List<AberturaContabil.SaldoPorConta> partidas, UUID contaId,
+                                         TipoPartida tipo, BigDecimal restante) {
+        while (restante.signum() > 0) {
+            BigDecimal valor = restante.min(LIMITE_PARTIDA);
+            partidas.add(new AberturaContabil.SaldoPorConta(contaId, tipo, valor));
+            restante = restante.subtract(valor);
+        }
     }
 
     LancamentoContabil escriturarTecnico(Empresa empresa, Usuario usuario, ExercicioContabil exercicio,
