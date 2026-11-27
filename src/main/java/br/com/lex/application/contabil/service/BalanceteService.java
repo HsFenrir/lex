@@ -7,7 +7,6 @@ import br.com.lex.domain.contabil.entity.Empresa;
 import br.com.lex.domain.contabil.entity.ExercicioContabil;
 import br.com.lex.domain.contabil.enums.TipoConta;
 import br.com.lex.domain.contabil.repository.ContaContabilRepository;
-import br.com.lex.domain.contabil.repository.ContaContabilRepository.ContaDoPlano;
 import br.com.lex.domain.contabil.repository.PartidaContabilRepository;
 import br.com.lex.domain.contabil.repository.PartidaContabilRepository.TotaisEscriturados;
 import lombok.RequiredArgsConstructor;
@@ -40,7 +39,7 @@ public class BalanceteService {
         Empresa empresa = contexto.empresa();
         ExercicioContabil exercicio = contexto.exercicio();
         List<Balancete.Conta> plano = contas.buscarEstruturaDoPlano(empresaId).stream()
-                .map(this::mapearConta)
+                .map(Balancete.Conta::daProjecao)
                 .toList();
 
         Map<UUID, ApuracaoSaldos> apuracoes = new HashMap<>();
@@ -73,12 +72,6 @@ public class BalanceteService {
         return new Balancete(new Balancete.Empresa(empresaId, empresa.getRazaoSocial(), empresa.getCnpj()),
                 new Balancete.Exercicio(exercicioId, exercicio.getAno(), exercicio.getDataInicio(), exercicio.getDataFim()),
                 inicio, fim, linhas, totais, totais.verificarEquilibrio());
-    }
-
-    private Balancete.Conta mapearConta(ContaDoPlano conta) {
-        return new Balancete.Conta(conta.getId(), conta.getContaPaiId(), conta.getCodigo(), conta.getNome(),
-                conta.getTipo(), conta.getNatureza(), conta.getAtiva(), conta.getGrupo(), conta.getClassificacaoBP(),
-                conta.getClassificacaoDRE(), conta.getContaRedutora(), conta.getContaReduzidaId());
     }
 
     private Balancete.Totais totalizarAnaliticas(Iterable<UUID> analiticas, Map<UUID, Resumo> saldos) {

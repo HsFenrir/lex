@@ -1,27 +1,31 @@
 # LEX — Andamento e passagem de contexto
 
-Atualização em 26/11/2026, após a conclusão do incremento 4C. Apresentação em 30/11/2026.
+Atualização em 26/11/2026, após a conclusão dos incrementos 5A e 5B. Apresentação em 30/11/2026.
 
 ## 1. Base verificada
 
 - Branch main sincronizada com origin/main e origin/HEAD segundo o log de push fornecido pelo desenvolvedor.
-- Checkpoint `be1ad09`, com o incremento 4B publicado. O incremento 4C está apto para commit.
+- Checkpoint `677d725`, com o incremento 4C publicado. O incremento 5A foi publicado em `d82f341` (`feat: implement trial balance and hierarchical account aggregation`), com seis arquivos, 512 inserções e nove exclusões. Este é o checkpoint de base do 5B, que está apto para commit.
 - As metas de 25/11 foram integralmente concluídas. Os serviços de Livro Diário e Livro Razão foram antecipados em relação às atividades previstas para 26/11.
 - AGENTS.md e documentação inicial publicados em 9d41a94. Incremento 1 publicado em 54a4b39, script de testes em 9fbd7d1, escopo acadêmico confirmado em 1bf3fbc e incremento 2 publicado em 47cf2a8.
 - Java 21.0.10, Maven Wrapper (Maven 3.10.1 relatado pelo Codex), Spring Boot 4.1.2, Hibernate ORM 7.4.13.Final, PostgreSQL 18.4, conforme relatórios/logs locais. Conferir pom.xml antes de mudanças.
-- No incremento 4C, foram compiladas 42 fontes principais e 12 fontes de teste. Flyway V1–V6 validado, schema `public` na V6 e Hibernate em `ddl-auto: validate`.
+- No incremento 5B, foram compiladas 49 fontes principais e 14 fontes de teste. Flyway V1–V6 validado, schema `public` na V6 e Hibernate em `ddl-auto: validate`.
 
 ## 2. Evidência de regressão
 
-O desenvolvedor executou `.\scripts\test.ps1` em 26/11/2026, com término às 19:45:05 (UTC−03:00), duração de 51,818 segundos e `BUILD SUCCESS`. Os 12 relatórios Surefire confirmam **105 testes, zero falhas, zero erros e zero ignorados**, incluindo oito casos de abertura e os 97 testes anteriores. As classes dos seis arquivos do incremento foram compiladas após as últimas alterações nas fontes e antes da geração dos relatórios. Os oito métodos de `AberturaContabilServiceTest` coincidem com os casos registrados no Surefire.
+No 5A, a execução de 26/11/2026 terminou às 20:10:57 (UTC−03:00), em 01:03 min, com `BUILD SUCCESS`. Foram aprovados **110 testes**, incluindo os cinco de `BalanceteServiceTest`, com zero falhas, erros ou ignorados.
+
+No 5B, o desenvolvedor executou `.\scripts\test.ps1` em 26/11/2026, com término às 22:32:20 (UTC−03:00), duração de 01:03 min e `BUILD SUCCESS`. Os 14 relatórios Surefire confirmam **116 testes, zero falhas, zero erros e zero ignorados**, incluindo seis casos de `DemonstracoesContabeisServiceTest` e os 110 anteriores. As classes dos nove arquivos do incremento foram compiladas após as últimas alterações nas fontes e antes da geração dos relatórios. Os seis métodos de teste das demonstrações coincidem com os casos do Surefire.
 
 Perfil Spring `test`, PostgreSQL 18.4 em `jdbc:postgresql://127.0.0.1:5432/lex_test`. Foram validadas seis migrations, com o schema `public` na V6 e aplicação integral de V1 a V6 em nove schemas descartáveis: três para confirmação e seis para estorno. Os testes aguardam o encerramento das threads com timeout e programam a remoção de cada schema gerado em `finally`. O script exige a role `lex_test_runner` e a ausência de privilégio `CONNECT` em `lex_dev` antes de iniciar o Maven.
 
 | Classe | Testes aprovados |
 |---|---:|
 | AberturaContabilServiceTest | 8 |
+| BalanceteServiceTest | 5 |
 | EstornoLancamentoContabilServiceTest | 19 |
 | ConfirmacaoLancamentoContabilServiceTest | 18 |
+| DemonstracoesContabeisServiceTest | 6 |
 | LancamentoContabilServiceTest | 25 |
 | LivroDiarioServiceTest | 5 |
 | LivroRazaoServiceTest | 5 |
@@ -31,7 +35,7 @@ Perfil Spring `test`, PostgreSQL 18.4 em `jdbc:postgresql://127.0.0.1:5432/lex_t
 | PartidaContabilRepositoryTest | 5 |
 | PlanoContasRepositoryTest | 1 |
 | LexApplicationTests | 1 |
-| Total | 105 |
+| Total | 116 |
 
 Os cenários negativos incluem violações esperadas das chaves estrangeiras `fk_conta_pai` e `fk_conta_reduzida` e das regras de unicidade `uq_lancamento_estorno_unico` e `uq_lancamento_numero_empresa_exercicio`. Os testes respectivos passaram. A colisão de número foi provocada após a alocação para verificar que o lançamento permanece em rascunho e a atualização do contador é revertida.
 
@@ -52,6 +56,8 @@ Na validação do incremento 1, em 25/11 às 01:46:32 (UTC−03:00), `.\mvnw.cmd
 | Livro Diário | Incremento 4A validado. Serviço de emissão e consulta compartilhada de partidas escrituradas disponíveis. |
 | Livro Razão | Incremento 4B validado. Emissão por conta analítica e apuração compartilhada de saldos disponíveis. |
 | Saldos iniciais | Incremento 4C validado. Abertura manual por lançamento escriturado no primeiro exercício da empresa. |
+| Balancete de Verificação | Incremento 5A publicado. Apuração por conta e agregação pela hierarquia do plano. |
+| Balanço Patrimonial e DRE | Incremento 5B validado. Emissão por data-base e intervalo, respectivamente. |
 | API/frontend | Estado completo a inspecionar; integração essencial pendente. |
 
 ### Arquivos e contratos do incremento 1
@@ -126,6 +132,31 @@ O estorno preserva a abertura no histórico e a abertura original, mesmo estorna
 
 A integração futura com `auditoria_evento` deve registrar empresa, usuário, operação e referência do lançamento, com os dados aplicáveis na mesma transação. Os valores de abertura de estoque e ativos deverão ser conciliados com os cadastros operacionais para evitar contabilização duplicada quando esses módulos entrarem em uso.
 
+### Contrato do incremento 5A
+
+`BalanceteService.emitir(UUID empresaId, UUID usuarioId, UUID exercicioId, LocalDate inicio, LocalDate fim)` retorna um `Balancete` imutável com empresa, exercício, intervalo inclusivo, linhas do plano completo, seis totais monetários e indicadores de equilíbrio do saldo anterior, dos movimentos e do saldo final. Reutiliza `ConsultaContabil` para autorização, isolamento e validação das datas.
+
+A projeção escalar do plano inclui contas zeradas e inativas. Uma consulta de movimentos agrupados no banco por conta e tipo de partida separa o saldo anterior dos movimentos do intervalo, limitado ao exercício e às datas contábeis. Aplica o filtro compartilhado de escrituração, incluindo aberturas, originais estornados e estornos confirmados. `ApuracaoSaldos` usa `BigDecimal`, sem arredondamento nem limite de precisão de uma partida. O saldo final é o saldo anterior mais débitos menos créditos. Seu sinal determina a natureza efetiva.
+
+As sintéticas recebem os saldos líquidos de seus descendentes pelo vínculo persistido `conta_pai_id`, de baixo para cima. Os totais gerais somam apenas analíticas e separam os saldos devedores e credores. Diferenças monetárias aparecem nos indicadores sem ajuste artificial. Hierarquia cíclica ou com pai inválido interrompe a emissão. Os testes reconciliam os totais dos movimentos com o Diário e os saldos analíticos com o Razão.
+
+### Contratos do incremento 5B
+
+- `BalancoPatrimonialService.emitir(UUID empresaId, UUID usuarioId, UUID exercicioId, LocalDate dataBase)` retorna `BalancoPatrimonial` com seções, contas analíticas, subtotais hierárquicos, saldo contábil assinado, valores de apresentação, diferença patrimonial e indicador de equilíbrio. Reutiliza o saldo final do Balancete na data-base, incluindo abertura e preservando a escrituração histórica. Totais partem das contas analíticas. Ativos usam o sinal contábil e passivos e PL usam o sinal invertido para apresentação. Contas redutoras permanecem na classificação correspondente, com o vínculo à conta reduzida, sem reclassificação por sinal.
+- `DreService.emitir(UUID empresaId, UUID usuarioId, UUID exercicioId, LocalDate inicio, LocalDate fim)` retorna `Dre` com rubricas e subtotais verticais, contas de resultado e valores por origem em intervalo inclusivo. Usa créditos menos débitos, preservando os efeitos econômicos. Outras receitas e despesas são exibidas em rubricas próprias, pois o modelo reúne itens operacionais e ganhos ou perdas de alienação nessas classificações. Ambos os DTOs usam records e listas copiadas.
+
+O BP usa `ATIVO_CIRCULANTE`, `ATIVO_NAO_CIRCULANTE`, `PASSIVO_CIRCULANTE`, `PASSIVO_NAO_CIRCULANTE` e `PATRIMONIO_LIQUIDO`. A DRE usa `RECEITA_BRUTA`, `DEDUCOES_RECEITA`, `CUSTOS`, `DESPESAS_OPERACIONAIS`, `RESULTADO_FINANCEIRO`, `OUTRAS_RECEITAS`, `OUTRAS_DESPESAS` e `TRIBUTOS_SOBRE_RESULTADO`. Os grupos patrimoniais são `ATIVO`, `PASSIVO` e `PATRIMONIO_LIQUIDO`. Os de resultado são `RECEITA`, `CUSTO` e `DESPESA`. As raízes sintéticas do modelo têm classificação nula.
+
+Na falta de classificação explícita, a resolução usa ancestrais sintéticos do mesmo grupo. O BP também pode usar o vínculo com a conta reduzida e a correspondência inequívoca do grupo PL. Uma conta relevante sem classificação suficiente interrompe a emissão com código e UUID no diagnóstico.
+
+O PL apresentado soma o PL escriturado e o resultado líquido ainda remanescente nas contas de resultado na data-base. Lucro aumenta o PL e prejuízo o reduz. Uma futura transferência escriturada reduz o remanescente e evita duplicidade. A diferença é calculada por ativo menos passivo menos PL. A suíte cruza os saldos do BP com o Razão e os movimentos da DRE com o Balancete, além de conferir a correspondência do resultado remanescente com o BP.
+
+A DRE agrupa movimentos por conta, tipo e origem, preservando também a origem do original estornado. Separa movimentos econômicos, saldos importados na abertura, estornos de abertura e acumulado do exercício até o fim do recorte. O saldo importado entra no resultado demonstrado quando o recorte começa no início do exercício e alcança a abertura. Nos recortes parciais que atingem esse histórico, o relatório sinaliza a falta de detalhamento e expõe a abertura separadamente quando ela está no intervalo. Os estornos afetam as respectivas datas contábeis. A DRE usa modelo próprio aprovado pelo desenvolvedor. A disponibilidade do modelo do professor permanece como ressalva acadêmica.
+
+A V6 possui as origens `MANUAL`, `ESTOQUE`, `ATIVO`, `DEPRECIACAO`, `ESTORNO` e `ABERTURA`. Ainda falta uma origem específica para distinguir os movimentos técnicos de encerramento na DRE. Para o incremento 6, propõe-se `ENCERRAMENTO`, sujeita à inspeção das constraints e à definição do tratamento dos respectivos estornos. A DRE deverá excluir esses efeitos técnicos, preservando os movimentos econômicos. O transporte patrimonial e a integração efetiva com auditoria continuam pendentes.
+
+As três emissões reutilizam as regras de autorização e escrituração e usam agregação em `BigDecimal`, sem arredondamento e sem consultas N+1. Em chamadas independentes, a transação de leitura `REPEATABLE_READ` mantém o snapshot entre consultas. Quando há transação externa com isolamento inferior, prevalece o isolamento externo.
+
 ## 4. Ambiente de execução
 
 | Perfil | JDBC | Role | Variáveis |
@@ -148,20 +179,19 @@ O padrão é `.\mvnw.cmd -o clean test`. Use `-Online` quando for necessário ob
 
 O script verifica variáveis e arquivos locais que podem sobrescrever a execução, solicita a senha de `lex_test_runner` no terminal e exige a resposta `lex_test|lex_test_runner|5432|f` do `psql` antes de iniciar o Maven. `PGPASSWORD` é removida logo após a consulta e `TEST_DB_*` é limpo ao final, inclusive em caso de falha. Consulte `$LASTEXITCODE` para o resultado da execução e confira o destino nos logs do Spring e do Flyway.
 
-O modo padrão do script foi validado nas suítes de 68, 87, 92, 97 e 105 testes. Para JUnit no IntelliJ, use `TEST_DB_*` nas configurações locais All in lex e LexApplicationTests. A atualização dessas configurações ainda não foi confirmada. Uma IDE já aberta não herda variáveis de um novo terminal.
+O modo padrão do script foi validado nas suítes de 68, 87, 92, 97, 105, 110 e 116 testes. Para JUnit no IntelliJ, use `TEST_DB_*` nas configurações locais All in lex e LexApplicationTests. A atualização dessas configurações ainda não foi confirmada. Uma IDE já aberta não herda variáveis de um novo terminal.
 
-## 5. Próxima etapa — Balancete de Verificação
+## 5. Próxima etapa — Incremento 4D, seguido do incremento 6
 
-A próxima etapa é implementar o Balancete de Verificação a partir dos movimentos escriturados e da apuração compartilhada. O transporte patrimonial automatizado permanece pendente. A apuração atual se limita ao exercício selecionado.
+No 4D, novas operações escrituradas deverão ter data contábil igual ou posterior à abertura de migração, quando aplicável. Lançamentos retroativos legítimos em períodos abertos continuam permitidos respeitado esse limite. O 4D também deve testar diretamente, em transações independentes, a concorrência entre abertura e confirmação manual. Depois, o incremento 6 tratará o fechamento e o transporte patrimonial entre exercícios.
 
 **Regra da escrituração efetiva.** Lançamentos `CONFIRMADOS`, inclusive os estornos confirmados, e lançamentos originais `ESTORNADOS` integram a escrituração. Cada um produz efeitos na sua própria data contábil, respeitado o corte do relatório. Lançamentos em `RASCUNHO` ficam fora dos saldos. O original e seu estorno podem produzir efeitos em períodos diferentes.
 
 ## 6. Backlog e riscos
 
-- P0: Balancete, demonstrações, continuidade patrimonial e fechamento automatizado. Na sequência, estoque PEPS, ativos e depreciação, conforme a meta de recuperação em [decisoes-e-cronograma.md](decisoes-e-cronograma.md).
-- Lançamentos com data anterior à abertura de migração podem duplicar movimentos incorporados aos saldos iniciais. Falta definir como tratar lançamentos retroativos nesse cenário.
+- P0: restrição temporal do 4D, continuidade patrimonial e fechamento automatizado. Na sequência, estoque PEPS, ativos e depreciação, conforme a meta de recuperação em [decisoes-e-cronograma.md](decisoes-e-cronograma.md).
+- Lançamentos com data anterior à abertura de migração podem duplicar movimentos incorporados aos saldos iniciais. A regra aprovada para o 4D trata esse risco e ainda aguarda implementação.
 - A correção após estorno da abertura deve permanecer possível por meio de lançamentos contábeis apropriados e rastreáveis.
-- A DRE deve tratar explicitamente os saldos de resultado importados, distinguindo os saldos acumulados das movimentações efetivamente detalhadas por período.
 - A continuidade patrimonial deve distinguir a abertura manual de migração da abertura automatizada de exercícios subsequentes, evitando duplicidade entre o transporte e os lançamentos de abertura.
 - P0: entregar link e manual. O enunciado confirma Diário, Razão, Balance (Balancete no planejamento), BP, DRE e os módulos de estoque, ativos e depreciação. Ver [requisitos-academicos.md](requisitos-academicos.md) para orientações de aula, PDFs e a ressalva do modelo de DRE.
 - A interface, a geração de PDFs e a integração da auditoria aos fluxos seguem pendentes. A exportação em PDF deverá contemplar o Livro Razão integral, além da emissão individual por conta disponível no serviço atual.
@@ -181,5 +211,7 @@ A próxima etapa é implementar o Balancete de Verificação a partir dos movime
 - 25/11: incremento 4A concluído antecipadamente, com Livro Diário e consulta compartilhada de movimentos escriturados. Suíte de 92 testes aprovada.
 - 25/11: incremento 4B concluído antecipadamente, com Livro Razão por conta e apuração compartilhada de saldos. Suíte de 97 testes aprovada.
 - 26/11: incremento 4C concluído, com abertura manual de saldos iniciais por lançamento contábil. Suíte de 105 testes aprovada.
+- 26/11: incremento 5A publicado em `d82f341`, com Balancete de Verificação e agregação hierárquica. Suíte de 110 testes aprovada.
+- 26/11: incremento 5B concluído, com Balanço Patrimonial e DRE. Suíte de 116 testes aprovada.
 
 Fontes: planejamento de 22/11; relatórios do Codex e logs PostgreSQL/Maven/Git de 25/11 fornecidos pelo desenvolvedor. Este documento não substitui inspeção do código vigente.

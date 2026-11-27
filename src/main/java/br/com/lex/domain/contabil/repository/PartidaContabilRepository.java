@@ -106,6 +106,48 @@ public interface PartidaContabilRepository
         BigDecimal getTotalPeriodo();
     }
 
+    @Query("""
+            select p.contaContabilId as contaId, p.tipo as tipo, l.origem as origem,
+                   original.origem as origemOriginal,
+                   sum(case when l.data < :corte then p.valor else 0 end) as totalAnterior,
+                   sum(case when l.data >= :corte then p.valor else 0 end) as totalPeriodo
+            from PartidaContabil p join p.lancamento l
+            join p.contaContabil c left join l.estornoDe original
+            """ + FILTRO_ESCRITURACAO + """
+              and c.grupo in (br.com.lex.domain.contabil.enums.GrupoConta.RECEITA,
+                              br.com.lex.domain.contabil.enums.GrupoConta.CUSTO,
+                              br.com.lex.domain.contabil.enums.GrupoConta.DESPESA)
+            group by p.contaContabilId, p.tipo, l.origem, original.origem
+            """)
+    List<TotaisPorOrigem> somarMovimentosDeResultadoPorOrigem(
+            @Param("empresaId") UUID empresaId,
+            @Param("exercicioId") UUID exercicioId,
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim,
+            @Param("corte") LocalDate corte
+    );
+
+    @Query("""
+            select min(l.data)
+            from PartidaContabil p join p.lancamento l join p.contaContabil c
+            """ + FILTRO_ESCRITURACAO + """
+              and l.origem = br.com.lex.domain.contabil.enums.OrigemLancamento.ABERTURA
+              and c.grupo in (br.com.lex.domain.contabil.enums.GrupoConta.RECEITA,
+                              br.com.lex.domain.contabil.enums.GrupoConta.CUSTO,
+                              br.com.lex.domain.contabil.enums.GrupoConta.DESPESA)
+            """)
+    Optional<LocalDate> buscarDataAberturaComResultado(
+            @Param("empresaId") UUID empresaId,
+            @Param("exercicioId") UUID exercicioId,
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim
+    );
+
+    interface TotaisPorOrigem extends TotaisEscriturados {
+        OrigemLancamento getOrigem();
+        OrigemLancamento getOrigemOriginal();
+    }
+
     interface DadosPartida {
         UUID getContaContabilId();
         TipoPartida getTipo();

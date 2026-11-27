@@ -6,6 +6,7 @@ import br.com.lex.domain.contabil.enums.ClassificacaoDRE;
 import br.com.lex.domain.contabil.enums.GrupoConta;
 import br.com.lex.domain.contabil.enums.NaturezaConta;
 import br.com.lex.domain.contabil.enums.TipoConta;
+import br.com.lex.domain.contabil.repository.ContaContabilRepository.ContaDoPlano;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -31,6 +32,11 @@ public record Balancete(
             boolean ativa, GrupoConta grupo, ClassificacaoBP classificacaoBP, ClassificacaoDRE classificacaoDRE,
             boolean contaRedutora, UUID contaReduzidaId
     ) {
+        public static Conta daProjecao(ContaDoPlano conta) {
+            return new Conta(conta.getId(), conta.getContaPaiId(), conta.getCodigo(), conta.getNome(),
+                    conta.getTipo(), conta.getNatureza(), conta.getAtiva(), conta.getGrupo(), conta.getClassificacaoBP(),
+                    conta.getClassificacaoDRE(), conta.getContaRedutora(), conta.getContaReduzidaId());
+        }
     }
 
     public record Linha(Conta conta, Resumo saldos) {
