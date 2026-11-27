@@ -4,7 +4,18 @@
 
 Construir uma interface educacional que exponha os fluxos reais do LEX, reutilizando as regras e os cálculos do backend. Consulte o [README](../README.md), [integração web](integracao-web.md), [identidade visual](identidade-visual.md) e [andamento](andamento.md).
 
-Em 27/11/2026, o 6D recomenda Thymeleaf, HTML5, CSS3 e JavaScript com Spring MVC, API REST e sessão no servidor sob a mesma origem HTTPS, em um único JAR. A decisão final será alinhada entre o responsável e o colaborador frontend antes de iniciar a implementação ou instalar dependências. Das 36 rotas propostas, 16 têm serviço de aplicação e 20 exigem implementação adicional. A camada HTTP está pendente.
+O 6E registra duas iniciativas de interface. Das 36 rotas propostas, 16 têm serviço de aplicação e 20 exigem implementação adicional. A camada HTTP está pendente.
+
+| Plano | Responsável | Branch proposta |
+|---|---|---|
+| A | Colaborador frontend | `feat/frontend-colaborador` |
+| B | Desenvolvedor principal, para contingência | `feat/frontend-contingencia` |
+
+Ambas usam o mesmo backend, os mesmos contratos de API, as mesmas regras contábeis e a identidade oficial do LEX. Reutilizar o núcleo de negócio em todos os fluxos. O Plano B tem preferência por Thymeleaf, HTML5, CSS3 e JavaScript, com Spring MVC, API REST e sessão no servidor sob a mesma origem HTTPS, em um JAR. Priorizar cobertura funcional, acessibilidade, integração, estabilidade e prazo.
+
+O colaborador pode desenvolver o Plano A em paralelo ao backend. O desenvolvedor principal só inicia o Plano B após a conclusão e validação integral do backend.
+
+Antes da estabilização final, comparar as versões pela cobertura dos requisitos obrigatórios, pelos fluxos ponta a ponta com dados persistidos, pela acessibilidade, pela estabilidade e pela prontidão para implantação. A versão selecionada será integrada de forma controlada na `main`.
 
 ## Identidade visual obrigatória
 
@@ -65,7 +76,7 @@ Os diretórios locais `templates/` e `static/` estão vazios. A estrutura intern
 
 ## Fluxo de Git
 
-Criar branch de frontend a partir da `main` atualizada depois da publicação da documentação. Coordenar alterações em `pom.xml`, configuração de segurança, DTOs e controllers. Manter os commits focados e revisar a integração com o responsável. Não executar comandos destrutivos, reescrever a main nem aplicar migrations em bancos compartilhados.
+Partir da `main` atualizada quando o trabalho de interface for iniciado. Coordenar alterações em `pom.xml`, configuração de segurança, DTOs e controllers. Manter commits focados e revisar a integração com o responsável. Não executar comandos destrutivos, reescrever a main nem aplicar migrations em bancos compartilhados.
 
 ## Definição de pronto para cada tela
 
@@ -79,4 +90,4 @@ Criar branch de frontend a partir da `main` atualizada depois da publicação da
 
 ## Decisões ainda abertas
 
-Arquitetura final do frontend, validação das extensões de interface da identidade visual, hospedagem, endereço público, mecanismo de PDF e provisionamento de usuários de demonstração. O cancelamento auditável de rascunhos manuais, Razão integral, auditoria geral e integração operacional do fechamento ainda exigem trabalho de backend. Não mascarar tais pendências com dados simulados.
+Arquitetura do Plano A, seleção da versão definitiva, validação das extensões de interface da identidade visual, hospedagem, endereço público, mecanismo de PDF e provisionamento de usuários de demonstração. O cancelamento auditável de rascunhos manuais, Razão integral, auditoria geral e integração operacional do fechamento ainda exigem trabalho de backend. Identificar dados simulados como fixtures.

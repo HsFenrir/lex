@@ -45,7 +45,7 @@ O último checkpoint de código validado é `597f34e`. A regressão de 27/11/202
 - Java 21, Spring Boot 4.1.2 conforme o `pom.xml`, Spring MVC e Spring Data JPA/Hibernate.
 - PostgreSQL (18.4 no ambiente validado), Flyway e Maven Wrapper.
 - JUnit e testes de integração em PostgreSQL isolado.
-- Thymeleaf já consta no `pom.xml`. O 6D recomenda Thymeleaf, HTML5, CSS3 e JavaScript com Spring MVC, API REST e sessão no servidor na mesma origem HTTPS, em um único JAR. A escolha será alinhada com o colaborador frontend. React + TypeScript foi avaliado como alternativa.
+- Thymeleaf já consta no `pom.xml`. Thymeleaf, HTML5, CSS3 e JavaScript são a preferência do Plano B, com Spring MVC, API REST e sessão no servidor na mesma origem HTTPS, em um único JAR. A tecnologia do Plano A será alinhada com o colaborador. [Integração web](docs/integracao-web.md).
 
 O sistema é organizado em camadas, com regras de negócio no servidor. A apresentação não deve acessar repositórios nem recriar cálculos contábeis autoritativos.
 
@@ -147,7 +147,9 @@ Executar em uma sessão PowerShell dedicada. O script solicita a senha de `lex_t
 
 ## Colaboração
 
-Sincronize a branch principal e crie uma branch de trabalho (por exemplo, `feat/frontend-base`). Combine previamente alterações em contratos HTTP, DTOs, segurança e arquivos compartilhados. Prefira commits focados e revisão antes da integração na `main`. Não faça force push ou alterações destrutivas sem autorização.
+O Plano A é a interface do colaborador e pode avançar em paralelo ao backend. O Plano B é a contingência do desenvolvedor principal e só começa após a conclusão e validação integral do backend. As branches propostas são `feat/frontend-colaborador` e `feat/frontend-contingencia`. Ambos usam o mesmo backend, os mesmos contratos de API, as mesmas regras contábeis e a identidade oficial do LEX. A seleção ocorre antes da estabilização final, conforme o funcionamento e a cobertura demonstrados. [Guia frontend](docs/guia-frontend.md).
+
+Sincronizar a branch principal antes do trabalho e combinar alterações em contratos HTTP, DTOs, segurança e arquivos compartilhados. Manter commits focados e revisar diffs antes da integração controlada na `main`.
 
 O frontend pode evoluir com fixtures fictícias explicitamente marcadas, enquanto a API é implementada. Não apresentar mocks como dados persistidos nem inventar endpoints definitivos. Consulte o [guia frontend](docs/guia-frontend.md) antes de começar.
 

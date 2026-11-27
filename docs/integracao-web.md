@@ -17,9 +17,9 @@ Planejamento do incremento 6D, sobre o checkpoint `597f34e`. Os contratos abaixo
 
 A base funcional é o núcleo já validado com 133 testes. O único material produzido no 6D é a documentação. [Andamento](andamento.md).
 
-## Arquitetura recomendada
+## Arquitetura preferencial do Plano B
 
-**Spring MVC + Thymeleaf para a interface da entrega, com API REST e páginas sob a mesma origem HTTPS.** Renderizar navegação, formulários e tabelas no servidor. Usar JavaScript pontual para adicionar partidas, atualizar totais visíveis ou buscar dados pela API de mesma origem, mantendo cálculo e validação definitivos no servidor. Controllers de página e REST devem chamar os mesmos serviços de aplicação. A renderização de página não precisa fazer chamadas HTTP internas para a própria API. O Spring Boot já oferece suporte aos templates e recursos estáticos no classpath. [Referência do Spring Boot](https://docs.spring.io/spring-boot/reference/web/servlet.html).
+**Spring MVC e Thymeleaf para a contingência, com API REST e páginas sob a mesma origem HTTPS.** Renderizar navegação, formulários e tabelas no servidor. Usar JavaScript pontual para adicionar partidas, atualizar totais visíveis ou buscar dados pela API de mesma origem, mantendo cálculo e validação definitivos no servidor. Controllers de página e REST devem chamar os mesmos serviços de aplicação. A renderização de página pode chamar os serviços diretamente. O Spring Boot já oferece suporte aos templates e recursos estáticos no classpath. [Referência do Spring Boot](https://docs.spring.io/spring-boot/reference/web/servlet.html).
 
 | Critério | MVC e Thymeleaf | React + TypeScript |
 | --- | --- | --- |
@@ -29,7 +29,7 @@ A base funcional é o núcleo já validado com 133 testes. O único material pro
 | Acessibilidade | HTML semântico e navegação de página oferecem uma base simples para teclado, foco e mensagens de erro. | Também suporta HTML semântico. Estados assíncronos, foco e transições de rota precisam de atenção explícita. |
 | Implantação | Código Java, templates e recursos em um único JAR. | Uma origem continua possível, mas é necessário empacotar o build estático, definir o fallback de rotas e preservar a distinção entre rotas da interface e da API. |
 
-A proposta usa HTML5, CSS3 e JavaScript com Thymeleaf e Spring MVC. React + TypeScript continua como opção futura. A escolha para a entrega depende de alinhamento entre o responsável e o colaborador frontend. [Decisões e cronograma](decisoes-e-cronograma.md) · [Guia frontend](guia-frontend.md).
+O colaborador pode desenvolver o Plano A em paralelo ao backend. O Plano B é a contingência do desenvolvedor principal e só começa após a conclusão e validação integral do backend. Sua preferência é HTML5, CSS3 e JavaScript com Thymeleaf e Spring MVC. Ambos compartilham backend, contratos HTTP, regras contábeis e identidade oficial. A escolha ocorre antes da estabilização final por funcionamento, cobertura, acessibilidade e prontidão para implantação. [Guia frontend](guia-frontend.md).
 
 ## Contrato HTTP preliminar
 
@@ -136,9 +136,9 @@ Usar rótulos em português brasileiro, navegação por teclado, foco visível, 
 
 | Data | Sequência proposta |
 | --- | --- |
-| 27/11 | Priorizar estoque PEPS, ativos e depreciação com contabilização, como previsto no cronograma revisado. Assim que o fluxo básico estiver disponível, preparar autenticação, escopo por empresa, DTOs de transporte e erros, e começar a navegação e o fluxo de lançamento sem depender de contratos operacionais ainda indefinidos. |
+| 27/11 | Iniciar pelo incremento 7A de estoque PEPS, previsto para ser antecipado na janela de trabalho até as 02h00. Ativos e depreciação seguem na etapa operacional. Assim que o fluxo básico estiver disponível, preparar autenticação, escopo por empresa, DTOs de transporte e erros. O Plano A pode preparar navegação e o fluxo de lançamento em paralelo. |
 | 28/11 | Integrar login, empresa, plano, calendário, abertura, rascunhos, partidas e confirmação. Em seguida integrar estorno, relatórios, fechamento, telas operacionais, histórico e PDFs. Preparar implantação inicial e validar o fluxo ponta a ponta no ambiente de demonstração. |
 
 Priorizar um fluxo testável do login à consulta da escrituração. Em 29/11, o cronograma reserva estabilização, implantação definitiva, manual e ensaio. [Decisões e cronograma](decisoes-e-cronograma.md).
 
-Dependem de decisão do desenvolvedor a confirmação da arquitetura de interface, o ambiente e a origem pública do link, a forma de provisionar usuários de demonstração e o mecanismo de geração de PDFs. A falta de consulta autorizada, cancelamento auditável de rascunho manual e emissão integral do Razão são dependências de implementação. As verificações operacionais do fechamento, a conciliação dos saldos de abertura com estoque e ativos e a auditoria geral permanecem pendentes. A ressalva sobre o formato acadêmico da DRE permanece registrada. [Andamento](andamento.md).
+Dependem de decisão a arquitetura do Plano A, a seleção da versão definitiva, o ambiente e a origem pública do link, a forma de provisionar usuários de demonstração e o mecanismo de geração de PDFs. A falta de consulta autorizada, cancelamento auditável de rascunho manual e emissão integral do Razão são dependências de implementação. As verificações operacionais do fechamento, a conciliação dos saldos de abertura com estoque e ativos e a auditoria geral permanecem pendentes. A ressalva sobre o formato acadêmico da DRE permanece registrada. [Andamento](andamento.md).

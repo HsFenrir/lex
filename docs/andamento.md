@@ -1,6 +1,6 @@
 # LEX — Andamento e passagem de contexto
 
-Atualização em 27/11/2026, após a regressão do checkpoint contábil e a consolidação do planejamento web e da colaboração frontend. Apresentação em 30/11/2026.
+Atualização em 27/11/2026, após a regressão do checkpoint contábil, a publicação da documentação web e o registro da estratégia de contingência frontend. Apresentação em 30/11/2026.
 
 ## 1. Base verificada
 
@@ -216,15 +216,15 @@ O script verifica variáveis e arquivos locais que podem sobrescrever a execuç�
 
 O modo padrão do script foi validado nas suítes de 68, 87, 92, 97, 105, 110, 116, 121 e 133 testes. Para JUnit no IntelliJ, use `TEST_DB_*` nas configurações locais All in lex e LexApplicationTests. A atualização dessas configurações ainda não foi confirmada. Uma IDE já aberta não herda variáveis de um novo terminal.
 
-## 5. Próxima etapa e colaboração — 27/11/2026
+## 5. Próxima etapa e contingência frontend — 27/11/2026
 
-As metas contábeis de 26/11/2026 foram concluídas. Em 27/11/2026, a próxima etapa é estoque PEPS, controle de ativos e depreciação linear, com contabilização integrada. Para retomar em nova sessão, usar os contratos da seção 3 e a suíte validada da seção 2 como base. A integração operacional deve reutilizar o núcleo de confirmação, incluindo o limite de migração e o bloqueio por calendário.
+As metas contábeis de 26/11/2026 foram concluídas. O desenvolvedor pretende trabalhar até as 02h00 de 27/11/2026 (horário de Brasília) para antecipar a próxima atividade, **incremento 7A — Controle de estoque PEPS**. Ativos e depreciação linear seguem no cronograma de módulos operacionais. Para retomar em nova sessão, usar os contratos da seção 3 e a suíte validada da seção 2 como base. A integração operacional deve reutilizar o núcleo de confirmação, incluindo o limite de migração e o bloqueio por calendário.
 
 **Regra da escrituração efetiva.** Lançamentos `CONFIRMADOS`, inclusive os estornos confirmados, e lançamentos originais `ESTORNADOS` integram a escrituração. Cada um produz efeitos na sua própria data contábil, respeitado o corte do relatório. Lançamentos em `RASCUNHO` ficam fora dos saldos. O original e seu estorno podem produzir efeitos em períodos diferentes.
 
-O 6D documentou a proposta de Thymeleaf, HTML5, CSS3 e JavaScript, com Spring MVC, API REST, sessão no servidor e uma mesma origem HTTPS em um único JAR. A arquitetura ainda será alinhada com o colaborador frontend. Os contratos HTTP são preliminares. [Integração web](integracao-web.md).
+O 6E registra a decisão do desenvolvedor de manter duas iniciativas de frontend. O **Plano A** fica com o colaborador e o **Plano B** com o desenvolvedor principal, como contingência. As duas versões compartilham o backend, os contratos de API, as regras contábeis e a identidade oficial. Para o Plano B, a preferência é Thymeleaf, HTML5, CSS3 e JavaScript, com Spring MVC, API REST, sessão no servidor e uma mesma origem HTTPS em um único JAR. O Plano B prioriza cobertura funcional, acessibilidade, integração, estabilidade e prazo. [Integração web](integracao-web.md).
 
-A divisão de trabalho proposta permite desenvolver interface e backend em branches próprias, com contratos compartilhados, fixtures fictícias identificadas, revisão de diffs e integração controlada na `main`. [Guia frontend](guia-frontend.md).
+O Plano A pode avançar em paralelo ao backend. O Plano B só começa após a conclusão e validação integral do backend. As branches propostas são `feat/frontend-colaborador` e `feat/frontend-contingencia`. As fixtures fictícias devem ser identificadas, os diffs revisados e a integração na `main` controlada. A versão definitiva será selecionada antes da estabilização final pela cobertura dos requisitos e pelo funcionamento demonstrado em fluxos reais. [Guia frontend](guia-frontend.md).
 
 O manual PDF acadêmico 1.0, de outubro de 2026, é a referência normativa da identidade visual. O PNG principal corresponde à imagem raster da página 3. Tokens e componentes adicionais são propostas técnicas. Matriz vetorial, transparência, versões finais monocromática e negativa e favicon continuam pendentes. [Manual oficial](Manual_Identidade_Visual_LEX.pdf) · [Identidade visual para web](identidade-visual.md).
 
@@ -262,5 +262,6 @@ O manual PDF acadêmico 1.0, de outubro de 2026, é a referência normativa da i
 - 26/11: incrementos 6A, 6B e 6C concluídos na camada contábil, com fechamento mensal, fechamento anual, continuidade patrimonial e auditoria localizada. V7 validada e suíte de 133 testes aprovada após correção da fixture de abertura.
 
 - 27/11: regressão de 133 testes no checkpoint `597f34e` e consolidação documental do 6D, da identidade visual oficial e das orientações de colaboração frontend.
+- 27/11: documentação consolidada publicada em `b702b72`. O 6E registrou os planos A e B, o tratamento binário de PDF e PNG e a antecipação do 7A como próxima atividade.
 
 Fontes: planejamento de 22/11; relatórios do Codex e logs PostgreSQL/Maven/Git de 25/11 fornecidos pelo desenvolvedor. Este documento não substitui inspeção do código vigente.
