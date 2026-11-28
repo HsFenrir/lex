@@ -3,6 +3,7 @@ package br.com.lex.application.contabil.service;
 import br.com.lex.application.contabil.dto.AberturaContabil.SaldoPorConta;
 import br.com.lex.application.contabil.dto.ApropriacaoDepreciacao;
 import br.com.lex.application.contabil.dto.ProcessamentoDepreciacao;
+import br.com.lex.application.contabil.dto.ReversaoOperacional;
 import br.com.lex.application.contabil.dto.ProcessamentoDepreciacao.AtivoNaoElegivel;
 import br.com.lex.domain.contabil.entity.AtivoPatrimonial;
 import br.com.lex.domain.contabil.entity.Empresa;
@@ -55,6 +56,33 @@ public class DepreciacaoService {
         return escriturar(periodo, usuarioId, plano);
     }
 
+    /** O estorno tem efeito no último dia da própria competência, assim como a apropriação. */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public ReversaoOperacional estornarApropriacao(UUID empresaId, UUID usuarioId, UUID apropriacaoId, String historico) {
+        ativos.validarIsolamento();
+        contabilidade.validarAcessoOperacional(empresaId, usuarioId);
+        var original = apropriacoes.buscar(empresaId, apropriacaoId)
+                .orElseThrow(() -> new IllegalArgumentException("Apropriação não encontrada na empresa."));
+        var data = original.competencia().atEndOfMonth();
+        LancamentoContabilService.EstornoOperacional estorno = null;
+        if (original.lancamentoId() == null) {
+            bloquearCalendario(empresaId, usuarioId, original.exercicioId(), original.periodoId());
+        } else {
+            estorno = contabilidade.prepararEstornoOperacional(empresaId, usuarioId, original.lancamentoId(),
+                    OrigemLancamento.DEPRECIACAO, original.periodoId(), data);
+        }
+        var ativo = ativos.bloquearAtivo(empresaId, original.ativoId());
+        var efetivas = apropriacoes.listar(empresaId, ativo.getId()).stream().filter(a -> a.reversao() == null).toList();
+        if (efetivas.isEmpty() || !efetivas.getLast().id().equals(apropriacaoId)) {
+            throw new IllegalStateException("Somente a última apropriação efetiva do ativo pode ser estornada.");
+        }
+        LancamentoContabil lancamento = estorno == null ? null : contabilidade.escriturarEstornoOperacional(estorno, historico);
+        var reversao = contabilidade.auditarEstornoOperacional(empresaId, usuarioId, "apropriacao_depreciacao",
+                apropriacaoId, data, lancamento, historico);
+        apropriacoes.registrarEstorno(empresaId, reversao);
+        return reversao;
+    }
+
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public ProcessamentoDepreciacao processarCompetencia(UUID empresaId, UUID usuarioId, UUID exercicioId, UUID periodoId) {
         PeriodoContabil periodo = bloquearCalendario(empresaId, usuarioId, exercicioId, periodoId);
@@ -101,11 +129,15 @@ public class DepreciacaoService {
     }
 
     private PlanoApropriacao planejar(AtivoPatrimonial ativo, YearMonth competencia) {
+        if (ativos.aquisicaoEstornada(ativo)) {
+            return new PlanoApropriacao(ativo, Situacao.INELEGIVEL, null, null, null, "A aquisição do ativo foi estornada.");
+        }
         if (!ativo.isDepreciavel() || ativo.getDataDisponibilidade() == null) {
             return new PlanoApropriacao(ativo, Situacao.INELEGIVEL, null, null, null,
                     "O ativo deve ser depreciável e ter disponibilidade para uso registrada.");
         }
-        List<ApropriacaoDepreciacao> historico = apropriacoes.listar(ativo.getEmpresaId(), ativo.getId());
+        List<ApropriacaoDepreciacao> historico = apropriacoes.listar(ativo.getEmpresaId(), ativo.getId()).stream()
+                .filter(a -> a.reversao() == null).toList();
         for (var existente : historico) {
             if (existente.competencia().equals(competencia)) {
                 return new PlanoApropriacao(ativo, Situacao.PROCESSADA, null, existente, null,

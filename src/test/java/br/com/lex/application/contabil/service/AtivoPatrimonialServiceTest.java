@@ -1448,6 +1448,132 @@ class AtivoPatrimonialServiceTest {
                 new SaldoInicialPatrimonial(c.empresa(), c.usuario(), abertura, List.of(bens))));
     }
 
+    @Test
+    void estornaAquisicaoLegadaDaV14SemExcluirFichaOuPosicaoHistorica() {
+        comSchema(schema -> {
+            migrar(schema, "14");
+            Cenario c = executar(schema, this::criarCenario);
+            var adquirido = executar(schema, () -> ativos.registrarAquisicao(maquina(c, "LEGADO-V14", CAIXA)));
+            migrar(schema, null);
+            LocalDate dataEstorno = DATA.plusDays(3);
+            Cenario outra = executar(schema, this::criarCenario);
+            assertThatThrownBy(() -> executar(schema, () -> ativos.estornarAquisicao(outra.empresa(), outra.usuario(),
+                    adquirido.id(), outra.periodo(), dataEstorno, "Estorno alheio")))
+                    .hasMessageContaining("não encontrado na empresa");
+            Cenario junho = periodo(schema, c, YearMonth.of(2026, 6));
+            assertThatThrownBy(() -> executar(schema, () -> ativos.estornarAquisicao(c.empresa(), c.usuario(), adquirido.id(),
+                    junho.periodo(), LocalDate.of(2026, 6, 1), "Estorno em junho")))
+                    .hasMessageContaining("depreciação pendente em competência anterior");
+            var estorno = executar(schema, () -> ativos.estornarAquisicao(c.empresa(), c.usuario(), adquirido.id(),
+                    c.periodo(), dataEstorno, "Aquisição cancelada"));
+            assertThat(estorno.numeroContabil()).isEqualTo(2L);
+            assertThat(estorno.lancamentoOriginalId()).isEqualTo(adquirido.lancamentoId());
+            assertThat(conciliarConta(schema, c, c.exercicio(), DATA, MAQUINAS).saldoOperacional()).isEqualByComparingTo("1200");
+            var atual = conciliarConta(schema, c, c.exercicio(), dataEstorno, MAQUINAS);
+            assertThat(atual.saldoContabil()).isZero();
+            assertThat(atual.saldoOperacional()).isZero();
+            assertThatThrownBy(() -> executar(schema, () -> apropriar(c, adquirido.id())))
+                    .hasMessageContaining("aquisição do ativo foi estornada");
+            assertThatThrownBy(() -> executar(schema, () -> ativos.estornarAquisicao(c.empresa(), c.usuario(), adquirido.id(),
+                    c.periodo(), dataEstorno, "Repetição"))).hasMessageContaining("original deve estar confirmado");
+            executar(schema, () -> {
+                var ficha = ativos.consultar(c.empresa(), c.usuario(), adquirido.id());
+                assertThat(ficha.situacao()).isEqualTo(FichaAtivo.Situacao.AQUISICAO_ESTORNADA);
+                assertThat(ficha.custoAquisicao()).isEqualByComparingTo("1200");
+                assertThat(ficha.valorContabilLiquido()).isZero();
+                assertThat(ficha.estornoAquisicao()).isEqualTo(estorno);
+                assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where version = '15' and success",
+                        Long.class)).isEqualTo(1L);
+                return fechamento.encerrarPeriodo(c.empresa(), c.usuario(), c.exercicio(), c.periodo());
+            });
+        });
+    }
+
+    @Test
+    void estornaUltimaDepreciacaoPositivaERestauraObrigacaoDeFechamento() {
+        comSchema(schema -> {
+            migrar(schema, null);
+            Cenario maio = executar(schema, this::criarCenario);
+            Cenario junho = periodo(schema, maio, YearMonth.of(2026, 6));
+            LocalDate fimJunho = LocalDate.of(2026, 6, 30);
+            var ativo = executar(schema, () -> ativos.registrarAquisicao(maquina(maio, "MAQUINA", CAIXA)));
+            var primeira = executar(schema, () -> apropriar(maio, ativo.id()));
+            var segunda = executar(schema, () -> apropriar(junho, ativo.id()));
+            assertThatThrownBy(() -> executar(schema, () -> ativos.estornarAquisicao(maio.empresa(), maio.usuario(),
+                    ativo.id(), maio.periodo(), DATA.plusDays(1), "Estorno com apropriação")))
+                    .hasMessageContaining("apropriação efetiva");
+            assertThatThrownBy(() -> executar(schema, () -> depreciacao.estornarApropriacao(maio.empresa(),
+                    maio.usuario(), primeira.id(), "Estorno fora de ordem")))
+                    .hasMessageContaining("última apropriação");
+            executar(schema, () -> fechamento.encerrarPeriodo(maio.empresa(), maio.usuario(), maio.exercicio(), maio.periodo()));
+            var estorno = executar(schema, () -> depreciacao.estornarApropriacao(junho.empresa(), junho.usuario(),
+                    segunda.id(), "Estorno da competência"));
+            assertThat(estorno.lancamentoOriginalId()).isEqualTo(segunda.lancamentoId());
+            assertThat(estorno.data()).isEqualTo(fimJunho);
+            assertThat(estorno.numeroContabil()).isEqualTo(4L);
+            assertThat(conciliarConta(schema, junho, junho.exercicio(), fimJunho, REDUTORA).saldoOperacional())
+                    .isEqualByComparingTo(primeira.valor());
+            assertThatThrownBy(() -> executar(schema, () ->
+                    fechamento.encerrarPeriodo(junho.empresa(), junho.usuario(), junho.exercicio(), junho.periodo())))
+                    .hasMessageContaining("MAQUINA (2026-06)");
+            executar(schema, () -> {
+                assertThat(dre.emitir(junho.empresa(), junho.usuario(), junho.exercicio(), fimJunho.withDayOfMonth(1),
+                        fimJunho).linhas()).filteredOn(l -> l.rubrica() == Rubrica.DESPESAS_OPERACIONAIS)
+                        .singleElement().satisfies(l -> assertThat(l.valorDemonstrado()).isZero());
+                return null;
+            });
+            var nova = executar(schema, () -> processar(junho)).processados().getFirst();
+            assertThat(nova.id()).isNotEqualTo(segunda.id());
+            assertThat(nova.valor()).isEqualByComparingTo(segunda.valor());
+            assertThat(nova.numeroContabil()).isEqualTo(5L);
+            var ficha = executar(schema, () -> ativos.consultar(maio.empresa(), maio.usuario(), ativo.id()));
+            assertThat(ficha.apropriacoes()).hasSize(3).filteredOn(a -> a.id().equals(segunda.id()))
+                    .singleElement().satisfies(a -> assertThat(a.reversao()).isEqualTo(estorno));
+            assertThat(ficha.competenciasProcessadas()).containsExactly(YearMonth.of(2026, 5), YearMonth.of(2026, 6));
+            executar(schema, () -> fechamento.encerrarPeriodo(junho.empresa(), junho.usuario(), junho.exercicio(), junho.periodo()));
+            assertThatThrownBy(() -> executar(schema, () -> depreciacao.estornarApropriacao(junho.empresa(),
+                    junho.usuario(), nova.id(), "Competência fechada"))).hasMessageContaining("período deve estar aberto");
+        });
+    }
+
+    @Test
+    void estornaCompetenciaZeroSemNumeroEPreservaSaldoImportadoAoReapropriar() {
+        comSchema(schema -> {
+            migrar(schema, null);
+            Cenario c = executar(schema, this::criarCenario);
+            UUID abertura = abrirPatrimonio(schema, c, DATA, "0.04", "0.01", "0");
+            var ativo = importar(schema, c, abertura,
+                    bemImportado(c, "CENTAVO", "0.04", "0.02", 6, "0.01", 1, false)).getFirst();
+            assertThatThrownBy(() -> executar(schema, () -> ativos.estornarAquisicao(c.empresa(), c.usuario(), ativo.id(),
+                    c.periodo(), DATA, "Estorno de ficha importada"))).hasMessageContaining("ficha importada");
+            var original = executar(schema, () -> apropriar(c, ativo.id()));
+            assertThat(original.valor()).isZero();
+            var estorno = executar(schema, () ->
+                    depreciacao.estornarApropriacao(c.empresa(), c.usuario(), original.id(), "Reverter parcela zero"));
+            assertThat(estorno.lancamentoEstornoId()).isNull();
+            assertThat(estorno.numeroContabil()).isNull();
+            assertThatThrownBy(() -> executar(schema, () -> depreciacao.estornarApropriacao(c.empresa(), c.usuario(),
+                    original.id(), "Estorno duplicado"))).hasMessageContaining("última apropriação efetiva");
+            assertThatThrownBy(() -> executar(schema, () ->
+                    fechamento.encerrarPeriodo(c.empresa(), c.usuario(), c.exercicio(), c.periodo())))
+                    .hasMessageContaining("CENTAVO (2026-05)");
+            var nova = executar(schema, () -> apropriar(c, ativo.id()));
+            assertThat(nova.id()).isNotEqualTo(original.id());
+            assertThat(nova.valor()).isZero();
+            executar(schema, () -> {
+                var ficha = ativos.consultar(c.empresa(), c.usuario(), ativo.id());
+                assertThat(ficha.depreciacaoAcumuladaImportada()).isEqualByComparingTo("0.01");
+                assertThat(ficha.baseDepreciavelRemanescente()).isEqualByComparingTo("0.01");
+                assertThat(ficha.apropriacoes()).hasSize(2);
+                assertThat(ficha.apropriacoes().getFirst().reversao()).isEqualTo(estorno);
+                assertThat(jdbc.queryForObject("select ultimo_numero from sequencia_lancamento", Long.class)).isEqualTo(1L);
+                assertThat(jdbc.queryForObject("select count(*) from auditoria_evento where acao = 'ESTORNAR'", Long.class))
+                        .isEqualTo(1L);
+                return fechamento.encerrarPeriodo(c.empresa(), c.usuario(), c.exercicio(), c.periodo());
+            });
+        });
+    }
+
     private Item conciliarConta(String schema, Cenario c, UUID exercicio, LocalDate data, String codigo) {
         var tx = new TransactionTemplate(transacoes);
         tx.setReadOnly(true);

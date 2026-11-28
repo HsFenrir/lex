@@ -15,18 +15,18 @@ public record FichaAtivo(
         int vidaUtilConsumidaMeses, int vidaUtilRemanescenteMeses, List<ApropriacaoDepreciacao> apropriacoes,
         Origem origem, UUID lancamentoAberturaId, UUID exercicioAberturaId, LocalDate dataAbertura,
         YearMonth marcoImportacao, YearMonth primeiraCompetenciaLex, int mesesConsumidosNaImportacao,
-        BigDecimal depreciacaoAcumuladaImportada, BigDecimal depreciacaoApropriadaLex
+        BigDecimal depreciacaoAcumuladaImportada, BigDecimal depreciacaoApropriadaLex, ReversaoOperacional estornoAquisicao
 ) {
     public FichaAtivo {
         apropriacoes = List.copyOf(apropriacoes);
     }
 
     public List<YearMonth> competenciasProcessadas() {
-        return apropriacoes.stream().map(ApropriacaoDepreciacao::competencia).toList();
+        return apropriacoes.stream().filter(a -> a.reversao() == null).map(ApropriacaoDepreciacao::competencia).toList();
     }
 
     public enum Situacao {
-        AGUARDANDO_DISPONIBILIDADE, DISPONIBILIDADE_REGISTRADA
+        AGUARDANDO_DISPONIBILIDADE, DISPONIBILIDADE_REGISTRADA, AQUISICAO_ESTORNADA
     }
 
     public enum Origem {

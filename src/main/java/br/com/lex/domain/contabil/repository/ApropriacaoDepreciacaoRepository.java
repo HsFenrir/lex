@@ -1,6 +1,7 @@
 package br.com.lex.domain.contabil.repository;
 
 import br.com.lex.application.contabil.dto.ApropriacaoDepreciacao;
+import br.com.lex.application.contabil.dto.ReversaoOperacional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -11,6 +12,7 @@ import java.time.YearMonth;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @Repository
@@ -29,9 +31,12 @@ public class ApropriacaoDepreciacaoRepository {
                     select coalesce(sum(d.valor), 0) as valor
                     from apropriacao_depreciacao d
                     where d.empresa_id = a.empresa_id and d.ativo_id = a.id and d.competencia <= ?
+                      and (d.data_estorno is null or d.data_estorno > ?)
                 ) d
                 where a.empresa_id = ? and coalesce(abertura.data, a.data_aquisicao) <= ?
                   and a.conta_redutora_id is not null
+                  and not exists (select 1 from estorno_operacional_efetivo e
+                                  where e.original_id = a.lancamento_aquisicao_id and e.data <= ?)
                 group by a.conta_redutora_id
                 """, rs -> {
             Map<UUID, SaldoRedutora> saldos = new HashMap<>();
@@ -41,7 +46,7 @@ public class ApropriacaoDepreciacaoRepository {
             }
             return saldos;
         }, YearMonth.from(dataBase).minusMonths(dataBase.getDayOfMonth() == dataBase.lengthOfMonth() ? 0 : 1)
-                .atDay(1), empresaId, dataBase);
+                .atDay(1), dataBase, empresaId, dataBase, dataBase);
     }
 
     public record SaldoRedutora(BigDecimal acumulado, BigDecimal importado) {
@@ -55,17 +60,41 @@ public class ApropriacaoDepreciacaoRepository {
         return consultar("", empresaId);
     }
 
+    public Optional<ApropriacaoDepreciacao> buscar(UUID empresaId, UUID apropriacaoId) {
+        return consultar("and d.id = ?", empresaId, apropriacaoId).stream().findFirst();
+    }
+
     private List<ApropriacaoDepreciacao> consultar(String filtro, Object... parametros) {
         return jdbc.query("""
-                select d.id, d.ativo_id, d.exercicio_id, d.periodo_id, d.competencia, d.valor, d.lancamento_id, l.numero
+                select d.id, d.ativo_id, d.exercicio_id, d.periodo_id, d.competencia, d.valor, d.lancamento_id, l.numero,
+                       d.data_estorno, d.lancamento_estorno_id, d.estornado_por, e.numero as numero_estorno
                 from apropriacao_depreciacao d
                 left join lancamento_contabil l on l.id = d.lancamento_id
+                left join lancamento_contabil e on e.id = d.lancamento_estorno_id
                 where d.empresa_id = ?
-                """ + filtro + " order by d.competencia", (rs, linha) -> new ApropriacaoDepreciacao(
-                rs.getObject("id", UUID.class), rs.getObject("ativo_id", UUID.class), rs.getObject("exercicio_id", UUID.class),
-                rs.getObject("periodo_id", UUID.class), YearMonth.from(rs.getObject("competencia", LocalDate.class)),
-                rs.getBigDecimal("valor"), rs.getObject("lancamento_id", UUID.class), rs.getObject("numero", Long.class)),
-                parametros);
+                """ + filtro + " order by d.competencia, (d.data_estorno is null), l.numero, d.id", (rs, linha) -> {
+            UUID id = rs.getObject("id", UUID.class);
+            UUID lancamento = rs.getObject("lancamento_id", UUID.class);
+            LocalDate dataEstorno = rs.getObject("data_estorno", LocalDate.class);
+            var reversao = dataEstorno == null ? null : new ReversaoOperacional(id, lancamento,
+                    rs.getObject("lancamento_estorno_id", UUID.class), rs.getObject("numero_estorno", Long.class),
+                    dataEstorno, rs.getObject("estornado_por", UUID.class));
+            return new ApropriacaoDepreciacao(id, rs.getObject("ativo_id", UUID.class), rs.getObject("exercicio_id", UUID.class),
+                    rs.getObject("periodo_id", UUID.class), YearMonth.from(rs.getObject("competencia", LocalDate.class)),
+                    rs.getBigDecimal("valor"), lancamento, rs.getObject("numero", Long.class), reversao);
+        }, parametros);
+    }
+
+    public void registrarEstorno(UUID empresaId, ReversaoOperacional reversao) {
+        int afetados = jdbc.update("""
+                update apropriacao_depreciacao
+                set data_estorno = ?, estornado_por = ?, lancamento_estorno_id = ?
+                where empresa_id = ? and id = ? and data_estorno is null
+                """, reversao.data(), reversao.usuarioId(), reversao.lancamentoEstornoId(),
+                empresaId, reversao.operacaoOriginalId());
+        if (afetados != 1) {
+            throw new IllegalStateException("A apropriação já foi estornada.");
+        }
     }
 
     public void inserir(UUID empresaId, UUID usuarioId, ApropriacaoDepreciacao apropriacao) {
@@ -87,6 +116,7 @@ public class ApropriacaoDepreciacaoRepository {
                     select count(*) as meses, coalesce(sum(d.valor), 0) as acumulado
                     from apropriacao_depreciacao d
                     where d.empresa_id = a.empresa_id and d.ativo_id = a.id and d.competencia <= ?
+                      and (d.data_estorno is null or d.data_estorno > ?)
                 ) h
                 cross join lateral (
                     select greatest(date_trunc('month', a.data_disponibilidade::timestamp), a.inicio_depreciacao_lex::timestamp)
@@ -96,7 +126,9 @@ public class ApropriacaoDepreciacaoRepository {
                   and h.meses + a.meses_consumidos_inicio < a.vida_util_meses
                   and h.acumulado + a.depreciacao_inicial < a.custo_aquisicao - a.valor_residual
                   and proxima.competencia <= ?
+                  and not exists (select 1 from estorno_operacional_efetivo e
+                                  where e.original_id = a.lancamento_aquisicao_id and e.data <= ?)
                 order by a.codigo
-                """, String.class, dataFinal, empresaId, dataFinal, dataFinal);
+                """, String.class, dataFinal, dataFinal, empresaId, dataFinal, dataFinal, dataFinal);
     }
 }

@@ -5,6 +5,7 @@ import br.com.lex.application.contabil.dto.AquisicaoAtivo;
 import br.com.lex.application.contabil.dto.ApropriacaoDepreciacao;
 import br.com.lex.application.contabil.dto.FichaAtivo;
 import br.com.lex.application.contabil.dto.SaldoInicialPatrimonial;
+import br.com.lex.application.contabil.dto.ReversaoOperacional;
 import br.com.lex.domain.contabil.entity.AtivoPatrimonial;
 import br.com.lex.domain.contabil.entity.Empresa;
 import br.com.lex.domain.contabil.entity.ExercicioContabil;
@@ -245,6 +246,32 @@ public class AtivoPatrimonialService {
     }
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
+    public ReversaoOperacional estornarAquisicao(UUID empresaId, UUID usuarioId, UUID ativoId,
+                                                 UUID periodoDestinoId, LocalDate data, String historico) {
+        validarIsolamento();
+        contabilidade.validarAcessoOperacional(empresaId, usuarioId);
+        AtivoPatrimonial ativo = buscarAtivo(empresaId, ativoId);
+        if (ativo.isImportado()) {
+            throw new IllegalStateException("Uma ficha importada não é uma aquisição regular.");
+        }
+        var estorno = contabilidade.prepararEstornoOperacional(empresaId, usuarioId,
+                ativo.getLancamentoAquisicao().getId(), OrigemLancamento.ATIVO, periodoDestinoId, data);
+        ativo = bloquearAtivo(empresaId, ativoId);
+        if (apropriacoes.listar(empresaId, ativoId).stream()
+                .anyMatch(a -> a.reversao() == null || a.reversao().data().isAfter(data))) {
+            throw new IllegalStateException("O ativo possui apropriação efetiva ou histórico posterior à data solicitada.");
+        }
+        // Uma competência anterior à baixa dos efeitos ainda exigiria depreciação no fechamento.
+        YearMonth primeira = ativo.primeiraCompetenciaLex();
+        if (primeira != null && ativo.baseInicialLex().signum() > 0 && primeira.atEndOfMonth().isBefore(data)) {
+            throw new IllegalStateException("A reversão deixaria depreciação pendente em competência anterior.");
+        }
+        var lancamento = contabilidade.escriturarEstornoOperacional(estorno, historico);
+        return contabilidade.auditarEstornoOperacional(empresaId, usuarioId, "ativo_patrimonial",
+                ativoId, data, lancamento, historico);
+    }
+
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public FichaAtivo registrarDisponibilidade(UUID empresaId, UUID usuarioId, UUID exercicioId, UUID periodoId,
                                                UUID ativoId, LocalDate data) {
         validarIsolamento();
@@ -253,6 +280,9 @@ public class AtivoPatrimonialService {
         validarCompetenciasDaDisponibilidade(empresaId, data.getYear(), data, ativo.baseInicialLex(),
                 ativo.vidaUtilInicialLex());
         em.refresh(ativo, LockModeType.PESSIMISTIC_WRITE);
+        if (aquisicaoEstornada(ativo)) {
+            throw new IllegalStateException("A aquisição do ativo foi estornada.");
+        }
         if (!apropriacoes.listar(empresaId, ativoId).isEmpty()) {
             throw new IllegalStateException("O ativo já possui competências de depreciação processadas.");
         }
@@ -288,6 +318,11 @@ public class AtivoPatrimonialService {
         AtivoPatrimonial ativo = buscarAtivo(empresaId, ativoId);
         em.refresh(ativo, LockModeType.PESSIMISTIC_WRITE);
         return ativo;
+    }
+
+    boolean aquisicaoEstornada(AtivoPatrimonial ativo) {
+        return ativo.getLancamentoAquisicao() != null
+                && ativos.aquisicaoEstornada(ativo.getEmpresaId(), ativo.getLancamentoAquisicao().getId());
     }
 
     private AtivoPatrimonial buscarAtivo(UUID empresaId, UUID ativoId) {
@@ -440,25 +475,34 @@ public class AtivoPatrimonialService {
     private FichaAtivo ficha(AtivoPatrimonial ativo, List<ApropriacaoDepreciacao> historico) {
         LancamentoContabil abertura = ativo.getLancamentoAbertura();
         LancamentoContabil lancamento = ativo.isImportado() ? abertura : ativo.getLancamentoAquisicao();
+        LancamentoContabil estorno = ativo.isImportado() ? null : contabilidade.buscarEstornoEfetivo(lancamento);
+        ReversaoOperacional reversao = estorno == null ? null : LancamentoContabilService.referenciaEstorno(
+                ativo.getId(), estorno, estorno.getData(), estorno.getConfirmadoPor().getId());
         FichaAtivo.Situacao situacao = ativo.getDataDisponibilidade() == null
                 ? FichaAtivo.Situacao.AGUARDANDO_DISPONIBILIDADE : FichaAtivo.Situacao.DISPONIBILIDADE_REGISTRADA;
-        BigDecimal apropriadaLex = historico.stream().map(ApropriacaoDepreciacao::valor)
+        if (reversao != null) {
+            situacao = FichaAtivo.Situacao.AQUISICAO_ESTORNADA;
+        }
+        var efetivas = historico.stream().filter(a -> a.reversao() == null).toList();
+        BigDecimal apropriadaLex = efetivas.stream().map(ApropriacaoDepreciacao::valor)
                 .reduce(BigDecimal.ZERO.setScale(2), BigDecimal::add);
         BigDecimal acumulada = ativo.getDepreciacaoInicial().add(apropriadaLex);
-        int mesesConsumidos = ativo.getMesesConsumidosInicio() + historico.size();
-        int mesesRestantes = ativo.vidaUtilInicialLex() - historico.size();
+        int mesesConsumidos = ativo.getMesesConsumidosInicio() + efetivas.size();
+        int mesesRestantes = reversao == null ? ativo.vidaUtilInicialLex() - efetivas.size() : 0;
         return new FichaAtivo(ativo.getId(), ativo.getEmpresaId(), ativo.getUsuarioId(), ativo.getCodigo(),
                 ativo.getDescricao(), ativo.getContaPatrimonialId(), ativo.getDataAquisicao(), ativo.getDataDisponibilidade(),
                 ativo.getCustoAquisicao(), ativo.isDepreciavel(), ativo.getValorResidual(), ativo.getVidaUtilMeses(),
                 ativo.baseDepreciavel(), ativo.getContaRedutoraId(), ativo.getContaDespesaId(), situacao,
                 lancamento.getId(), ativo.isImportado() ? null : lancamento.getExercicioId(), lancamento.getNumero(), acumulada,
-                ativo.getCustoAquisicao().subtract(acumulada), ativo.baseDepreciavel().subtract(acumulada),
+                reversao == null ? ativo.getCustoAquisicao().subtract(acumulada) : ZERO,
+                reversao == null ? ativo.baseDepreciavel().subtract(acumulada) : ZERO,
                 mesesConsumidos, mesesRestantes, historico,
                 ativo.isImportado() ? FichaAtivo.Origem.IMPORTACAO : FichaAtivo.Origem.AQUISICAO,
                 abertura == null ? null : abertura.getId(), abertura == null ? null : abertura.getExercicioId(),
                 abertura == null ? null : abertura.getData(),
                 abertura == null ? null : YearMonth.from(ativo.getInicioDepreciacaoLex()),
-                ativo.primeiraCompetenciaLex(), ativo.getMesesConsumidosInicio(), ativo.getDepreciacaoInicial(), apropriadaLex);
+                ativo.primeiraCompetenciaLex(), ativo.getMesesConsumidosInicio(), ativo.getDepreciacaoInicial(),
+                apropriadaLex, reversao);
     }
 
     private void auditarImportacao(AtivoPatrimonial ativo, LancamentoContabil abertura) {

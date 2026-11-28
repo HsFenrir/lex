@@ -27,11 +27,21 @@ public interface AtivoPatrimonialRepository extends JpaRepository<AtivoPatrimoni
 
     boolean existsByEmpresaIdAndCodigoIn(UUID empresaId, Collection<String> codigos);
 
+    @Query(value = "select exists (select 1 from estorno_operacional_efetivo where empresa_id = :empresaId and original_id = :originalId)",
+            nativeQuery = true)
+    boolean aquisicaoEstornada(UUID empresaId, UUID originalId);
+
     @Query("""
             select a.contaPatrimonialId as contaId, sum(a.custoAquisicao) as valor,
                    sum(case when abertura.id is not null then a.custoAquisicao else 0 end) as importado
             from AtivoPatrimonial a left join a.lancamentoAbertura abertura
+            left join a.lancamentoAquisicao aquisicao
             where a.empresaId = :empresaId and coalesce(abertura.data, a.dataAquisicao) <= :dataBase
+              and not exists (select 1 from LancamentoContabil estorno
+                              where estorno.empresaId = a.empresaId and estorno.estornoDeId = aquisicao.id
+                                and estorno.status = br.com.lex.domain.contabil.enums.StatusLancamento.CONFIRMADO
+                                and aquisicao.status = br.com.lex.domain.contabil.enums.StatusLancamento.ESTORNADO
+                                and estorno.exercicioId = aquisicao.exercicioId and estorno.data <= :dataBase)
             group by a.contaPatrimonialId
             """)
     List<CustoPorConta> somarCustosAte(UUID empresaId, LocalDate dataBase);

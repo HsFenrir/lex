@@ -9,6 +9,7 @@ import br.com.lex.application.contabil.dto.LivroDiario;
 import br.com.lex.application.contabil.dto.OperacaoEstoque;
 import br.com.lex.application.contabil.dto.OperacaoEstoqueConfirmada;
 import br.com.lex.application.contabil.dto.SaldoInicialEstoque;
+import br.com.lex.application.contabil.dto.ReversaoOperacional;
 import br.com.lex.application.contabil.service.EstoqueService.Contexto;
 import br.com.lex.application.contabil.service.EstoqueService.Ficha;
 import br.com.lex.application.contabil.service.EstoqueService.Saida;
@@ -656,6 +657,167 @@ class EstoqueServiceTest {
             assertThat(conciliarEstoque(schema, c, c.exercicio(), DATA).diferenca()).isZero();
             executar(schema, () -> fechamento.encerrarPeriodo(c.empresa(), c.usuario(), c.exercicio(), c.periodo()));
         });
+    }
+
+    @Test
+    void estornaVendaECompraPreservandoAlocacoesPepsECortesContabeis() {
+        comCenario((schema, c) -> {
+            UUID abertura = abrirEstoque(schema, c, "10.00");
+            var loteInicial = executar(schema, () -> estoque.importarSaldoInicial(pedidoDeImportacao(c, abertura))).getFirst();
+            var compra = executar(schema, () -> estoque.registrarCompra(operacao(c, DATA.plusDays(1), "2", "8", CAIXA)));
+            LocalDate dataVenda = DATA.plusDays(2);
+            var venda = executar(schema, () -> estoque.registrarVenda(operacao(c, dataVenda, "3", "12", CAIXA)));
+            var alocacoes = executar(schema, () ->
+                    estoque.consultarAlocacoes(c.empresa(), c.usuario(), c.produto(), venda.movimentoId()));
+            assertThat(alocacoes).extracting(Alocacao::entradaId).containsExactly(loteInicial.id(), compra.movimentoId());
+            conferirAlocacao(alocacoes.getFirst(), "2", "10");
+            conferirAlocacao(alocacoes.getLast(), "1", "8");
+            assertThatThrownBy(() -> estornar(schema, c, compra.movimentoId(), DATA.plusDays(3)))
+                    .hasMessageContaining("última movimentação efetiva");
+            assertThatThrownBy(() -> estornar(schema, c, loteInicial.id(), DATA.plusDays(3)))
+                    .hasMessageContaining("origem esperada");
+
+            LocalDate dataEstornoVenda = DATA.plusDays(3);
+            var estornoVenda = estornar(schema, c, venda.movimentoId(), dataEstornoVenda);
+            assertThat(estornoVenda.numeroContabil()).isEqualTo(4L);
+            assertThat(executar(schema, () -> ficha(c)).saldo().valor()).isEqualByComparingTo("26");
+            assertThat(executar(schema, () -> estoque.consultarAlocacoes(c.empresa(), c.usuario(), c.produto(),
+                    venda.movimentoId()))).containsExactlyElementsOf(alocacoes);
+            assertThat(conciliarEstoque(schema, c, c.exercicio(), dataVenda).saldoOperacional()).isEqualByComparingTo("8");
+            assertThat(conciliarEstoque(schema, c, c.exercicio(), dataEstornoVenda).saldoOperacional()).isEqualByComparingTo("26");
+            assertThatThrownBy(() -> estornar(schema, c, venda.movimentoId(), dataEstornoVenda))
+                    .hasMessageContaining("original deve estar confirmado");
+
+            LocalDate dataEstornoCompra = DATA.plusDays(4);
+            var estornoCompra = estornar(schema, c, compra.movimentoId(), dataEstornoCompra);
+            executar(schema, () -> {
+                Ficha ficha = ficha(c);
+                assertThat(ficha.movimentos()).hasSize(3);
+                assertThat(ficha.reversoes()).containsExactly(estornoVenda, estornoCompra);
+                assertThat(ficha.lotes()).filteredOn(l -> l.entradaId().equals(compra.movimentoId())).singleElement()
+                        .satisfies(l -> {
+                            assertThat(l.valorOriginal()).isEqualByComparingTo("16");
+                            assertThat(l.valorRestante()).isZero();
+                            assertThat(l.quantidadeRestante()).isZero();
+                        });
+                var diarioEmitido = diario.emitir(c.empresa(), c.usuario(), c.exercicio(), DATA, dataEstornoCompra);
+                var original = diarioEmitido.lancamentos().stream()
+                        .filter(l -> l.referencia().id().equals(venda.lancamentoId())).findFirst().orElseThrow();
+                assertThat(original.status()).isEqualTo(StatusLancamento.ESTORNADO);
+                assertThat(diarioEmitido.lancamentos()).filteredOn(l -> l.referencia().id().equals(estornoVenda.lancamentoEstornoId()))
+                        .singleElement().satisfies(l -> {
+                            assertThat(l.original().id()).isEqualTo(venda.lancamentoId());
+                            var esperadas = original.partidas().stream().map(p -> new SaldoPorConta(p.contaId(),
+                                    p.tipo() == TipoPartida.DEBITO ? TipoPartida.CREDITO : TipoPartida.DEBITO, p.valor())).toList();
+                            assertThat(l.partidas()).map(p -> new SaldoPorConta(p.contaId(), p.tipo(), p.valor()))
+                                    .containsExactlyInAnyOrderElementsOf(esperadas);
+                        });
+                assertThat(razao.emitir(c.empresa(), c.usuario(), c.exercicio(), c.contas().get(ESTOQUE), DATA, dataEstornoCompra)
+                        .saldos().saldoFinal().valor()).isEqualByComparingTo("10");
+                assertThat(balancete.emitir(c.empresa(), c.usuario(), c.exercicio(), DATA, dataEstornoCompra).linhas())
+                        .filteredOn(l -> l.conta().id().equals(c.contas().get(ESTOQUE))).singleElement()
+                        .satisfies(l -> assertThat(l.saldos().saldoFinal().valor()).isEqualByComparingTo("10"));
+                assertThat(balanco.emitir(c.empresa(), c.usuario(), c.exercicio(), dataEstornoCompra).secoes().stream()
+                        .flatMap(s -> s.linhas().stream()).filter(l -> l.conta().id().equals(c.contas().get(ESTOQUE))))
+                        .singleElement().satisfies(l -> assertThat(l.valorApresentado()).isEqualByComparingTo("10"));
+                assertThat(dre.emitir(c.empresa(), c.usuario(), c.exercicio(), DATA, dataEstornoCompra).linhas())
+                        .filteredOn(l -> l.rubrica() == Rubrica.RESULTADO_BRUTO).singleElement()
+                        .satisfies(l -> assertThat(l.valorDemonstrado()).isZero());
+                assertThat(jdbc.queryForObject("select count(*) from auditoria_evento where acao = 'ESTORNAR'", Long.class))
+                        .isEqualTo(2L);
+                return null;
+            });
+            assertThat(conciliarEstoque(schema, c, c.exercicio(), dataEstornoCompra).diagnostico()).isEqualTo(Diagnostico.CONCILIADO);
+            assertThatThrownBy(() -> executar(schema, () -> estoque.registrarVenda(operacao(c, dataVenda, "1", "12", CAIXA))))
+                    .hasMessageContaining("última movimentação");
+            var novaVenda = executar(schema, () -> estoque.registrarVenda(operacao(c, DATA.plusDays(5), "1", "12", CAIXA)));
+            assertThat(novaVenda.custoEstoque()).isEqualByComparingTo("5");
+        });
+    }
+
+    @Test
+    void estornaVendaComCmvZeroEReverteTodoEstornoSeAuditoriaFalhar() {
+        comCenario((schema, c) -> {
+            executar(schema, () -> estoque.registrarCompra(operacao(c, DATA, "3", "0.00333333", CAIXA)));
+            var venda = executar(schema, () -> estoque.registrarVenda(operacao(c, DATA, "1", "10", CAIXA)));
+            assertThat(venda.custoEstoque()).isZero();
+            Ficha antes = executar(schema, () -> ficha(c));
+            executar(schema, () -> {
+                jdbc.execute("alter table auditoria_evento add constraint teste_rejeitar_estorno check (acao <> 'ESTORNAR')");
+                return null;
+            });
+            assertThatThrownBy(() -> estornar(schema, c, venda.movimentoId(), DATA.plusDays(1)))
+                    .isInstanceOf(DataIntegrityViolationException.class).hasMessageContaining("teste_rejeitar_estorno");
+            assertThat(executar(schema, () -> ficha(c))).isEqualTo(antes);
+            executar(schema, () -> {
+                assertThat(jdbc.queryForObject("select ultimo_numero from sequencia_lancamento", Long.class)).isEqualTo(2L);
+                assertThat(jdbc.queryForObject("select count(*) from lancamento_contabil", Long.class)).isEqualTo(2L);
+                assertThat(jdbc.queryForObject("select count(*) from partida_contabil", Long.class)).isEqualTo(4L);
+                assertThat(jdbc.queryForObject("select count(*) from auditoria_evento where acao = 'ESTORNAR'", Long.class)).isZero();
+                jdbc.execute("alter table auditoria_evento drop constraint teste_rejeitar_estorno");
+                return null;
+            });
+            var estorno = estornar(schema, c, venda.movimentoId(), DATA.plusDays(1));
+            assertThat(estorno.numeroContabil()).isEqualTo(3L);
+            var saldo = executar(schema, () -> ficha(c)).saldo();
+            assertThat(saldo.quantidade()).isEqualByComparingTo("3");
+            assertThat(saldo.valor()).isEqualByComparingTo("0.01");
+            assertThat(executar(schema, () -> jdbc.queryForObject(
+                    "select count(*) from partida_contabil where lancamento_id = ?", Long.class, estorno.lancamentoEstornoId())))
+                    .isEqualTo(2L);
+        });
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void estornoConcorrenteDaCompraSerializaComVendaOuOutroEstorno(boolean outraReversao) {
+        comCenario((schema, c) -> {
+            var compra = executar(schema, () -> estoque.registrarCompra(operacao(c, DATA, "2", "4", CAIXA)));
+            Runnable estornarCompra = () -> estoque.estornarMovimento(c.empresa(), c.usuario(), compra.movimentoId(),
+                    c.periodo(), DATA, "Estorno da compra");
+            var disputa = disputarComCommit(schema, estornarCompra, () -> {
+                if (outraReversao) {
+                    estornarCompra.run();
+                } else {
+                    estoque.registrarVenda(operacao(c, DATA, "1", "9", CAIXA));
+                }
+                return null;
+            }, outraReversao ? "lancamento_contabil" : "produto_estoque");
+            assertThatThrownBy(disputa::join).hasRootCauseMessage(outraReversao
+                    ? "O lançamento original deve estar confirmado." : "Estoque insuficiente para a saída.");
+            var ficha = executar(schema, () -> ficha(c));
+            assertThat(ficha.movimentos()).hasSize(1);
+            assertThat(ficha.reversoes()).hasSize(1);
+            assertThat(ficha.saldo().quantidade()).isZero();
+        });
+    }
+
+    @Test
+    void rejeitaEstornoDeOutraEmpresaOuComCompetenciaOriginalEncerrada() {
+        comCenario((schema, c) -> {
+            var compra = executar(schema, () -> estoque.registrarCompra(operacao(c, DATA, "2", "4", CAIXA)));
+            Cenario outra = executar(schema, this::criarCenario);
+            assertThatThrownBy(() -> estornar(schema, outra, compra.movimentoId(), DATA))
+                    .hasMessageContaining("Movimento não encontrado na empresa");
+            var junho = LocalDate.of(2026, 6, 1);
+            UUID destino = executar(schema, () -> {
+                var periodo = new PeriodoContabil(em.getReference(ExercicioContabil.class, c.exercicio()),
+                        (short) 6, junho, junho.withDayOfMonth(30));
+                em.persist(periodo);
+                em.flush();
+                return periodo.getId();
+            });
+            executar(schema, () -> fechamento.encerrarPeriodo(c.empresa(), c.usuario(), c.exercicio(), c.periodo()));
+            assertThatThrownBy(() -> executar(schema, () -> estoque.estornarMovimento(c.empresa(), c.usuario(),
+                    compra.movimentoId(), destino, junho, "Estorno da compra")))
+                    .hasMessageContaining("período deve estar aberto");
+            assertThat(executar(schema, () -> ficha(c)).reversoes()).isEmpty();
+        });
+    }
+
+    private ReversaoOperacional estornar(String schema, Cenario c, UUID movimento, LocalDate data) {
+        return executar(schema, () -> estoque.estornarMovimento(c.empresa(), c.usuario(), movimento,
+                c.periodo(), data, "Estorno operacional"));
     }
 
     @Test

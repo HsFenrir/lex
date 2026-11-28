@@ -1,5 +1,6 @@
 package br.com.lex.domain.contabil.repository;
 
+import br.com.lex.application.contabil.dto.ReversaoOperacional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -9,6 +10,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Repository
@@ -19,7 +21,9 @@ public class MovimentoEstoqueRepository {
 
     public LocalDate ultimaData(UUID empresaId, UUID produtoId) {
         return jdbc.queryForObject("""
-                select max(data) from movimento_estoque where empresa_id = ? and produto_id = ?
+                select greatest(max(m.data), max(e.data))
+                from movimento_estoque m left join estorno_operacional_efetivo e on e.original_id = m.lancamento_id
+                where m.empresa_id = ? and m.produto_id = ?
                 """, LocalDate.class, empresaId, produtoId);
     }
 
@@ -33,10 +37,74 @@ public class MovimentoEstoqueRepository {
                     from alocacao_estoque a
                     join movimento_estoque s on s.id = a.saida_id
                     where a.entrada_id = l.entrada_id and s.data <= ?
+                      and not exists (select 1 from estorno_operacional_efetivo rev
+                                      where rev.original_id = s.lancamento_id and rev.data <= ?)
                 ) consumo
                 where l.empresa_id = ? and e.data <= ?
+                  and not exists (select 1 from estorno_operacional_efetivo rev
+                                  where rev.original_id = e.lancamento_id and rev.data <= ?)
                 """, (rs, linha) -> new Posicao(rs.getLong("lotes"), rs.getBigDecimal("saldo")),
-                dataBase, empresaId, dataBase);
+                dataBase, dataBase, empresaId, dataBase, dataBase);
+    }
+
+    public Optional<Movimento> buscar(UUID empresaId, UUID movimentoId) {
+        return jdbc.query("""
+                select id, empresa_id, produto_id, exercicio_id, periodo_id, usuario_id, data, tipo,
+                       quantidade, valor_total, lancamento_id
+                from movimento_estoque where empresa_id = ? and id = ?
+                """, (rs, linha) -> mapearMovimento(rs), empresaId, movimentoId).stream().findFirst();
+    }
+
+    public Optional<UUID> ultimoMovimentoEfetivo(UUID empresaId, UUID produtoId) {
+        return jdbc.queryForList("""
+                select m.id from movimento_estoque m
+                where m.empresa_id = ? and m.produto_id = ?
+                  and not exists (select 1 from estorno_operacional_efetivo e where e.original_id = m.lancamento_id)
+                order by m.data desc, m.ordem desc limit 1
+                """, UUID.class, empresaId, produtoId).stream().findFirst();
+    }
+
+    public boolean possuiOutroMovimentoVinculado(Movimento movimento) {
+        return Boolean.TRUE.equals(jdbc.queryForObject("""
+                select exists (select 1 from movimento_estoque where empresa_id = ? and lancamento_id = ? and id <> ?)
+                """, Boolean.class, movimento.empresaId(), movimento.lancamentoId(), movimento.id()));
+    }
+
+    public void neutralizarLote(Movimento entrada) {
+        int afetados = jdbc.update("""
+                update lote_estoque set quantidade_restante = 0, valor_restante = 0
+                where empresa_id = ? and produto_id = ? and entrada_id = ?
+                  and quantidade_restante = ? and valor_restante = ?
+                """, entrada.empresaId(), entrada.produtoId(), entrada.id(), entrada.quantidade(), entrada.valorTotal());
+        if (afetados != 1) {
+            throw new IllegalStateException("A entrada possui consumo efetivo ou o lote está indisponível.");
+        }
+    }
+
+    public void restaurar(Movimento saida, Alocacao alocacao) {
+        int afetados = jdbc.update("""
+                update lote_estoque l
+                set quantidade_restante = l.quantidade_restante + ?, valor_restante = l.valor_restante + ?
+                from movimento_estoque e
+                where l.empresa_id = ? and l.produto_id = ? and l.entrada_id = ? and e.id = l.entrada_id
+                  and l.quantidade_restante + ? <= e.quantidade and l.valor_restante + ? <= e.valor_total
+                  and not exists (select 1 from estorno_operacional_efetivo r where r.original_id = e.lancamento_id)
+                """, alocacao.quantidade(), alocacao.valor(), saida.empresaId(), saida.produtoId(), alocacao.entradaId(),
+                alocacao.quantidade(), alocacao.valor());
+        if (afetados != 1) {
+            throw new IllegalStateException("O lote original não comporta a restauração da alocação.");
+        }
+    }
+
+    public List<ReversaoOperacional> historicoEstornos(UUID empresaId, UUID produtoId) {
+        return jdbc.query("""
+                select m.id, m.lancamento_id as original_id, e.lancamento_id, e.data, e.numero, e.usuario_id
+                from movimento_estoque m join estorno_operacional_efetivo e on e.original_id = m.lancamento_id
+                where m.empresa_id = ? and m.produto_id = ?
+                order by e.data, e.numero
+                """, (rs, linha) -> new ReversaoOperacional(uuid(rs, "id"), uuid(rs, "original_id"),
+                uuid(rs, "lancamento_id"), rs.getObject("numero", Long.class), rs.getObject("data", LocalDate.class),
+                uuid(rs, "usuario_id")), empresaId, produtoId);
     }
 
     public BigDecimal somarValorImportadoAte(UUID empresaId, LocalDate dataBase) {
@@ -125,11 +193,14 @@ public class MovimentoEstoqueRepository {
                        quantidade, valor_total, lancamento_id
                 from movimento_estoque where empresa_id = ? and produto_id = ?
                 order by data, ordem
-                """, (rs, linha) -> new Movimento(uuid(rs, "id"), uuid(rs, "empresa_id"), uuid(rs, "produto_id"),
+                """, (rs, linha) -> mapearMovimento(rs), empresaId, produtoId);
+    }
+
+    private Movimento mapearMovimento(ResultSet rs) throws SQLException {
+        return new Movimento(uuid(rs, "id"), uuid(rs, "empresa_id"), uuid(rs, "produto_id"),
                 uuid(rs, "exercicio_id"), uuid(rs, "periodo_id"), uuid(rs, "usuario_id"),
                 rs.getObject("data", LocalDate.class), Tipo.valueOf(rs.getString("tipo")),
-                rs.getBigDecimal("quantidade"), rs.getBigDecimal("valor_total"), uuid(rs, "lancamento_id")),
-                empresaId, produtoId);
+                rs.getBigDecimal("quantidade"), rs.getBigDecimal("valor_total"), uuid(rs, "lancamento_id"));
     }
 
     public List<Alocacao> alocacoes(UUID empresaId, UUID produtoId, UUID saidaId) {

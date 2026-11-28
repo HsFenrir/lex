@@ -2,6 +2,7 @@ package br.com.lex.application.contabil.service;
 
 import br.com.lex.application.contabil.dto.AberturaConfirmada;
 import br.com.lex.application.contabil.dto.AberturaContabil;
+import br.com.lex.application.contabil.dto.ReversaoOperacional;
 import br.com.lex.domain.contabil.ApuracaoSaldos;
 import br.com.lex.domain.contabil.entity.ContaContabil;
 import br.com.lex.domain.contabil.entity.Empresa;
@@ -30,7 +31,9 @@ import br.com.lex.domain.contabil.repository.SequenciaLancamentoRepository;
 import br.com.lex.domain.contabil.repository.UsuarioRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -64,6 +67,7 @@ public class LancamentoContabilService {
     private final MovimentoEstoqueRepository movimentosEstoque;
     private final AtivoPatrimonialRepository ativosPatrimoniais;
     private final EntityManager entityManager;
+    private final JdbcTemplate jdbc;
 
     public LancamentoContabilService(
             UsuarioRepository usuarioRepository,
@@ -77,7 +81,7 @@ public class LancamentoContabilService {
             SequenciaLancamentoRepository sequenciaRepository,
             MovimentoEstoqueRepository movimentosEstoque,
             AtivoPatrimonialRepository ativosPatrimoniais,
-            EntityManager entityManager
+            EntityManager entityManager, JdbcTemplate jdbc
     ) {
         this.usuarioRepository = usuarioRepository;
         this.empresaRepository = empresaRepository;
@@ -91,6 +95,7 @@ public class LancamentoContabilService {
         this.movimentosEstoque = movimentosEstoque;
         this.ativosPatrimoniais = ativosPatrimoniais;
         this.entityManager = entityManager;
+        this.jdbc = jdbc;
     }
 
     @Transactional
@@ -236,6 +241,12 @@ public class LancamentoContabilService {
         ExercicioContabil exercicio = buscarExercicio(empresaId, exercicioDestinoId);
         PeriodoContabil periodo = buscarPeriodo(empresaId, exercicioDestinoId, periodoDestinoId);
         bloquearEValidarDestino(exercicio, periodo, empresa, usuario, data);
+        return gravarRascunhoInvertido(original, exercicio, periodo, usuario, data, historico);
+    }
+
+    private LancamentoContabil gravarRascunhoInvertido(LancamentoContabil original, ExercicioContabil exercicio,
+                                                       PeriodoContabil periodo, Usuario usuario, LocalDate data,
+                                                       String historico) {
         List<DadosPartida> partidas = buscarPartidas(original);
         validarPartidasParaConfirmacao(original, partidas);
 
@@ -246,6 +257,41 @@ public class LancamentoContabilService {
                 .map(partida -> new PartidaContabil(estorno, contaRepository.getReferenceById(partida.getContaContabilId()),
                         inverter(partida.getTipo()), partida.getValor(), partida.getHistorico()))
                 .toList());
+        return estorno;
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    EstornoOperacional prepararEstornoOperacional(UUID empresaId, UUID usuarioId, UUID lancamentoId,
+                                                  OrigemLancamento origem, UUID periodoId, LocalDate data) {
+        Usuario usuario = buscarUsuarioAtivo(usuarioId);
+        Empresa empresa = buscarEmpresaAutorizada(empresaId, usuarioId);
+        LancamentoContabil original = bloquearLancamentoAtualizado(empresaId, lancamentoId);
+        validarOriginalConfirmado(original);
+        if (original.getOrigem() != origem
+                || lancamentoRepository.findByEstornoDeIdAndEmpresaId(original.getId(), empresaId).isPresent()) {
+            throw new IllegalStateException("A operação não corresponde à origem esperada ou já possui estorno.");
+        }
+        validarDataEstorno(original, data);
+        ExercicioContabil exercicio = buscarExercicio(empresaId, original.getExercicioId());
+        PeriodoContabil periodoOriginal = buscarPeriodo(empresaId, exercicio.getId(), original.getPeriodoId());
+        PeriodoContabil destino = buscarPeriodo(empresaId, exercicio.getId(), periodoId);
+        if (data.isBefore(destino.getDataInicio()) || data.isAfter(destino.getDataFim())) {
+            throw new IllegalArgumentException("A data da reversão deve estar dentro do período de destino.");
+        }
+        // Os períodos são bloqueados em ordem cronológica antes do exercício e do controle auxiliar.
+        entityManager.refresh(periodoOriginal, LockModeType.PESSIMISTIC_READ);
+        bloquearEValidarDestino(exercicio, destino, empresa, usuario, data);
+        validarCalendario(exercicio, periodoOriginal, original.getData());
+        validarContinuidade(empresaId, exercicio);
+        return new EstornoOperacional(original, exercicio, destino, usuario, data);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    LancamentoContabil escriturarEstornoOperacional(EstornoOperacional operacao, String historico) {
+        LancamentoContabil original = operacao.original();
+        LancamentoContabil estorno = gravarRascunhoInvertido(original, operacao.exercicio(), operacao.periodo(),
+                operacao.usuario(), operacao.data(), historico);
+        confirmarInversao(original, estorno, operacao.usuario(), buscarPartidas(estorno));
         return estorno;
     }
 
@@ -263,13 +309,49 @@ public class LancamentoContabilService {
         }
 
         List<DadosPartida> partidas = validarConfirmacao(estorno, empresa, usuario);
+        confirmarInversao(original, estorno, usuario, partidas);
+        return estorno;
+    }
+
+    private void confirmarInversao(LancamentoContabil original, LancamentoContabil estorno, Usuario usuario,
+                                    List<DadosPartida> partidas) {
         if (!contarPartidas(buscarPartidas(original), true).equals(contarPartidas(partidas, false))) {
             throw new IllegalStateException("As partidas do estorno não correspondem à inversão integral do original.");
         }
         registrarConfirmacao(estorno, usuario);
         original.marcarComoEstornado();
         lancamentoRepository.flush();
-        return estorno;
+    }
+
+    LancamentoContabil buscarEstornoEfetivo(LancamentoContabil original) {
+        if (original.getStatus() != StatusLancamento.ESTORNADO) {
+            return null;
+        }
+        return lancamentoRepository.findByEstornoDeIdAndEmpresaId(original.getId(), original.getEmpresaId())
+                .filter(estorno -> estorno.getStatus() == StatusLancamento.CONFIRMADO)
+                .orElseThrow(() -> new IllegalStateException("O lançamento estornado não possui inversão confirmada."));
+    }
+
+    ReversaoOperacional auditarEstornoOperacional(UUID empresaId, UUID usuarioId, String entidade, UUID operacaoId,
+                                                 LocalDate data, LancamentoContabil estorno, String historico) {
+        if (historico == null || historico.isBlank()) {
+            throw new IllegalArgumentException("Informe o histórico da reversão.");
+        }
+        var reversao = referenciaEstorno(operacaoId, estorno, data, usuarioId);
+        jdbc.update("""
+                insert into auditoria_evento (empresa_id, usuario_id, entidade, entidade_id, acao, dados_novos)
+                values (?, ?, ?, ?, 'ESTORNAR', jsonb_build_object(
+                    'lancamentoOriginalId', cast(? as uuid), 'lancamentoEstornoId', cast(? as uuid),
+                    'numeroContabil', cast(? as bigint), 'data', cast(? as date), 'historico', cast(? as text)))
+                """, empresaId, usuarioId, entidade, operacaoId, reversao.lancamentoOriginalId(),
+                reversao.lancamentoEstornoId(), reversao.numeroContabil(), data, historico.trim());
+        return reversao;
+    }
+
+    static ReversaoOperacional referenciaEstorno(UUID operacaoId, LancamentoContabil estorno,
+                                                  LocalDate data, UUID usuarioId) {
+        return new ReversaoOperacional(operacaoId, estorno == null ? null : estorno.getEstornoDeId(),
+                estorno == null ? null : estorno.getId(), estorno == null ? null : estorno.getNumero(), data, usuarioId);
     }
 
     @Transactional
@@ -618,6 +700,9 @@ public class LancamentoContabilService {
     }
 
     private record EstornoBloqueado(LancamentoContabil original, LancamentoContabil estorno) { }
+
+    record EstornoOperacional(LancamentoContabil original, ExercicioContabil exercicio, PeriodoContabil periodo,
+                              Usuario usuario, LocalDate data) { }
 
     private record ChavePartida(UUID contaId, TipoPartida tipo, BigDecimal valor) { }
 }

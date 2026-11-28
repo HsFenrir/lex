@@ -4,6 +4,7 @@ import br.com.lex.application.contabil.dto.AberturaContabil.SaldoPorConta;
 import br.com.lex.application.contabil.dto.OperacaoEstoque;
 import br.com.lex.application.contabil.dto.OperacaoEstoqueConfirmada;
 import br.com.lex.application.contabil.dto.SaldoInicialEstoque;
+import br.com.lex.application.contabil.dto.ReversaoOperacional;
 import br.com.lex.domain.contabil.entity.Empresa;
 import br.com.lex.domain.contabil.entity.ExercicioContabil;
 import br.com.lex.domain.contabil.entity.LancamentoContabil;
@@ -87,7 +88,8 @@ public class EstoqueService {
         contabilidade.validarAcessoOperacional(empresaId, usuarioId);
         ProdutoEstoque produto = buscarProduto(empresaId, produtoId);
         return new Ficha(dados(produto), movimentos.saldo(empresaId, produtoId),
-                movimentos.lotes(empresaId, produtoId, true), movimentos.historico(empresaId, produtoId));
+                movimentos.lotes(empresaId, produtoId, true), movimentos.historico(empresaId, produtoId),
+                movimentos.historicoEstornos(empresaId, produtoId));
     }
 
     @Transactional(readOnly = true)
@@ -172,6 +174,49 @@ public class EstoqueService {
                     TipoPartida.CREDITO, saida.valorTotal());
         }
         return confirmarOperacao(operacao, saida, valor, "VENDA", partidas);
+    }
+
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public ReversaoOperacional estornarMovimento(UUID empresaId, UUID usuarioId, UUID movimentoId,
+                                                 UUID periodoDestinoId, LocalDate data, String historico) {
+        validarIsolamento();
+        contabilidade.validarAcessoOperacional(empresaId, usuarioId);
+        Movimento movimento = movimentos.buscar(empresaId, movimentoId)
+                .orElseThrow(() -> new IllegalArgumentException("Movimento não encontrado na empresa."));
+        var estorno = contabilidade.prepararEstornoOperacional(empresaId, usuarioId, movimento.lancamentoId(),
+                OrigemLancamento.ESTOQUE, periodoDestinoId, data);
+        bloquearProduto(empresaId, movimento.produtoId());
+        if (movimentos.possuiOutroMovimentoVinculado(movimento)) {
+            throw new IllegalStateException("O lançamento original está vinculado a mais de uma movimentação.");
+        }
+        if (movimentos.ultimoMovimentoEfetivo(empresaId, movimento.produtoId()).filter(movimentoId::equals).isEmpty()) {
+            throw new IllegalStateException("Somente a última movimentação efetiva do produto pode ser estornada.");
+        }
+        if (data.isBefore(movimentos.ultimaData(empresaId, movimento.produtoId()))) {
+            throw new IllegalStateException("A reversão não pode anteceder o último evento de estoque do produto.");
+        }
+        if (movimento.tipo() == Tipo.ENTRADA) {
+            movimentos.neutralizarLote(movimento);
+        } else {
+            restaurarSaida(movimento);
+        }
+        LancamentoContabil lancamento = contabilidade.escriturarEstornoOperacional(estorno, historico);
+        return contabilidade.auditarEstornoOperacional(empresaId, usuarioId, "movimento_estoque",
+                movimentoId, data, lancamento, historico);
+    }
+
+    private void restaurarSaida(Movimento movimento) {
+        List<Alocacao> alocacoes = movimentos.alocacoes(movimento.empresaId(), movimento.produtoId(), movimento.id());
+        BigDecimal quantidade = BigDecimal.ZERO;
+        BigDecimal valor = BigDecimal.ZERO;
+        for (Alocacao alocacao : alocacoes) {
+            quantidade = quantidade.add(alocacao.quantidade());
+            valor = valor.add(alocacao.valor());
+            movimentos.restaurar(movimento, alocacao);
+        }
+        if (quantidade.compareTo(movimento.quantidade()) != 0 || valor.compareTo(movimento.valorTotal()) != 0) {
+            throw new IllegalStateException("As alocações não correspondem às quantidades e custos originais da saída.");
+        }
     }
 
     private Contexto contexto(OperacaoEstoque operacao) {
@@ -373,10 +418,12 @@ public class EstoqueService {
     public record Produto(UUID id, UUID empresaId, String codigo, String descricao, String unidade, boolean ativo) {
     }
 
-    public record Ficha(Produto produto, Saldo saldo, List<Lote> lotes, List<Movimento> movimentos) {
+    public record Ficha(Produto produto, Saldo saldo, List<Lote> lotes, List<Movimento> movimentos,
+                        List<ReversaoOperacional> reversoes) {
         public Ficha {
             lotes = List.copyOf(lotes);
             movimentos = List.copyOf(movimentos);
+            reversoes = List.copyOf(reversoes);
         }
     }
 
