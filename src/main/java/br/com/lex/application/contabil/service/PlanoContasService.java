@@ -1,6 +1,7 @@
 
 package br.com.lex.application.contabil.service;
 
+import br.com.lex.application.contabil.dto.PlanoContabil;
 import br.com.lex.domain.contabil.entity.ContaContabil;
 import br.com.lex.domain.contabil.entity.Empresa;
 import br.com.lex.domain.contabil.entity.ModeloContaContabil;
@@ -8,12 +9,14 @@ import br.com.lex.domain.contabil.entity.ModeloPlanoContas;
 import br.com.lex.domain.contabil.entity.PlanoContas;
 import br.com.lex.domain.contabil.entity.Usuario;
 import br.com.lex.domain.contabil.enums.TipoConta;
+import br.com.lex.domain.contabil.repository.ContaContabilRepository;
 import br.com.lex.domain.contabil.repository.EmpresaRepository;
 import br.com.lex.domain.contabil.repository.ModeloContaContabilRepository;
 import br.com.lex.domain.contabil.repository.ModeloPlanoContasRepository;
 import br.com.lex.domain.contabil.repository.PlanoContasRepository;
 import br.com.lex.domain.contabil.repository.UsuarioRepository;
 import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.stereotype.Service;
 
@@ -32,6 +35,8 @@ public class PlanoContasService {
     private final ModeloPlanoContasRepository modeloPlanoContasRepository;
     private final ModeloContaContabilRepository modeloContaContabilRepository;
     private final PlanoContasRepository planoContasRepository;
+    private final ContaContabilRepository contas;
+    private final ConsultaContabil acesso;
     private final EntityManager entityManager;
 
     public PlanoContasService(
@@ -40,7 +45,9 @@ public class PlanoContasService {
             ModeloPlanoContasRepository modeloPlanoContasRepository,
             ModeloContaContabilRepository modeloContaContabilRepository,
             PlanoContasRepository planoContasRepository,
-            EntityManager entityManager
+            EntityManager entityManager,
+            ContaContabilRepository contas,
+            ConsultaContabil acesso
     ) {
         this.usuarioRepository = usuarioRepository;
         this.empresaRepository = empresaRepository;
@@ -48,6 +55,24 @@ public class PlanoContasService {
         this.modeloContaContabilRepository = modeloContaContabilRepository;
         this.planoContasRepository = planoContasRepository;
         this.entityManager = entityManager;
+        this.contas = contas;
+        this.acesso = acesso;
+    }
+
+    @Transactional(readOnly = true)
+    public PlanoContabil consultar(UUID empresaId, UUID usuarioId) {
+        acesso.usuarioAtivo(usuarioId);
+        acesso.empresaDoUsuario(empresaId, usuarioId);
+        PlanoContas plano = planoContasRepository.findByEmpresaId(empresaId)
+                .orElseThrow(() -> new IllegalArgumentException("Plano de contas da empresa não encontrado."));
+        List<PlanoContabil.Conta> detalhes = contas.findAllByPlanoContasIdOrderByCodigoAsc(plano.getId())
+                .stream()
+                .map(conta -> new PlanoContabil.Conta(conta.getId(), conta.getCodigo(), conta.getNome(),
+                        conta.getTipo(), conta.getNatureza(), conta.getGrupo(), conta.getClassificacaoBP(),
+                        conta.getClassificacaoDRE(), conta.getContaPaiId(), conta.getContaRedutora(),
+                        conta.getContaReduzidaId(), conta.getAtiva(), conta.getModeloContaId()))
+                .toList();
+        return new PlanoContabil(plano.getId(), empresaId, plano.getModeloVersao(), detalhes);
     }
 
     /**
@@ -82,6 +107,12 @@ public class PlanoContasService {
                 .orElseThrow(() -> new IllegalArgumentException(
                         "Empresa não encontrada ou não pertence ao usuário."
                 ));
+
+        entityManager.refresh(empresa, LockModeType.PESSIMISTIC_WRITE);
+        entityManager.refresh(usuario, LockModeType.PESSIMISTIC_READ);
+        if (!usuarioId.equals(empresa.getUsuario().getId()) || !usuario.isAtivo()) {
+            throw new IllegalStateException("A autorização para provisionar o plano foi alterada.");
+        }
 
         if (empresa.getArquivadaEm() != null) {
             throw new IllegalStateException(
@@ -144,7 +175,6 @@ public class PlanoContasService {
         }
 
         entityManager.flush();
-
         return plano;
     }
 

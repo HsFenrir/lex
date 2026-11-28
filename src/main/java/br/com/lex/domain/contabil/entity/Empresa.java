@@ -63,4 +63,24 @@ public class Empresa {
         this.nomeFantasia = nomeFantasia;
         this.cnpj = cnpj;
     }
+
+    public void atualizarDados(String razaoSocial, String nomeFantasia, String cnpj) {
+        this.razaoSocial = razaoSocial;
+        this.nomeFantasia = nomeFantasia;
+        this.cnpj = cnpj;
+    }
+
+    public void arquivar(Usuario responsavel, OffsetDateTime momento, String motivo) {
+        ativa = false;
+        arquivadaEm = momento;
+        arquivadaPor = responsavel;
+        motivoArquivamento = motivo;
+    }
+
+    public void reativar() {
+        ativa = true;
+        arquivadaEm = null;
+        arquivadaPor = null;
+        motivoArquivamento = null;
+    }
 }

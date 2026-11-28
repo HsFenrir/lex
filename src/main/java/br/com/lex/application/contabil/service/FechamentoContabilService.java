@@ -31,7 +31,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -59,6 +58,7 @@ public class FechamentoContabilService {
     private final ApropriacaoDepreciacaoRepository depreciacoes;
     private final EntityManager em;
     private final JdbcTemplate jdbc;
+    private final CalendarioContabilService calendario;
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public PeriodoEncerrado encerrarPeriodo(UUID empresaId, UUID usuarioId, UUID exercicioId, UUID periodoId) {
@@ -107,14 +107,14 @@ public class FechamentoContabilService {
         }
 
         // Use a mesma serialização do cadastro antes de descobrir ou bloquear o sucessor.
-        jdbc.queryForObject("select bloquear_e_validar_exercicios(?, true)", Integer.class, empresaId);
-        List<PeriodoContabil> calendarioOrigem = bloquearPeriodos(empresaId, exercicioId);
+        calendario.bloquearOrdemAnual(empresaId);
+        List<PeriodoContabil> calendarioOrigem = calendario.bloquearPeriodos(empresaId, exercicioId);
         PeriodoContabil dezembro = calendarioOrigem.stream().filter(p -> p.getMes() == 12).findFirst()
                 .orElseThrow(() -> new IllegalStateException("Cadastre dezembro antes do encerramento anual."));
         short anoDestino = (short) (origem.getAno() + 1);
         ExercicioContabil destino = exercicios.findByEmpresaIdAndAno(empresaId, anoDestino).orElse(null);
         if (destino != null) {
-            bloquearPeriodos(empresaId, destino.getId());
+            calendario.bloquearPeriodos(empresaId, destino.getId());
         }
 
         em.refresh(origem, LockModeType.PESSIMISTIC_WRITE);
@@ -151,7 +151,7 @@ public class FechamentoContabilService {
             LocalDate inicio = origem.getDataFim().plusDays(1);
             proximo = exercicios.save(new ExercicioContabil(contexto.empresa(), anoDestino, inicio, inicio.plusYears(1).minusDays(1)));
         }
-        PeriodoContabil janeiro = completarCalendario(proximo, calendarioDestino);
+        PeriodoContabil janeiro = calendario.completar(proximo, 1, calendarioDestino).getFirst();
         UUID encerramentoId = escriturar(contexto.empresa(), usuario, origem, dezembro, origem.getDataFim(),
                 "Encerramento anual de " + origem.getAno(), OrigemLancamento.ENCERRAMENTO, tecnicas.encerramento());
         proximo.receberContinuidadeDe(origem);
@@ -197,14 +197,6 @@ public class FechamentoContabilService {
         }
     }
 
-    private List<PeriodoContabil> bloquearPeriodos(UUID empresaId, UUID exercicioId) {
-        List<PeriodoContabil> calendario = periodos.findAllByEmpresaIdAndExercicioIdOrderByMes(empresaId, exercicioId);
-        for (PeriodoContabil periodo : calendario) {
-            em.refresh(periodo, LockModeType.PESSIMISTIC_WRITE);
-        }
-        return calendario;
-    }
-
     private Usuario bloquearAutorizacao(Empresa empresa, UUID usuarioId) {
         em.refresh(empresa, LockModeType.PESSIMISTIC_READ);
         Usuario usuario = em.find(Usuario.class, usuarioId);
@@ -232,18 +224,6 @@ public class FechamentoContabilService {
                         Set.of(StatusLancamento.CONFIRMADO, StatusLancamento.ESTORNADO))) {
             throw new IllegalStateException("O exercício de destino está incompatível ou já possui escrituração.");
         }
-    }
-
-    private PeriodoContabil completarCalendario(ExercicioContabil destino, List<PeriodoContabil> existentes) {
-        Map<Short, PeriodoContabil> porMes = existentes.stream()
-                .collect(Collectors.toMap(PeriodoContabil::getMes, periodo -> periodo));
-        for (short mes = 1; mes <= 12; mes++) {
-            if (!porMes.containsKey(mes)) {
-                YearMonth data = YearMonth.of(destino.getAno(), mes);
-                porMes.put(mes, periodos.save(new PeriodoContabil(destino, mes, data.atDay(1), data.atEndOfMonth())));
-            }
-        }
-        return porMes.get((short) 1);
     }
 
     private void validarEquilibrio(Balancete apurado) {

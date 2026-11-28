@@ -1,10 +1,10 @@
 # LEX — Andamento e passagem de contexto
 
-Atualização em 28/11/2026, após a conclusão técnica do incremento 9B de reversões operacionais. Apresentação em 30/11/2026.
+Atualização em 28/11/2026, após a conclusão técnica do incremento 10A de gerenciamento empresarial e calendário contábil. Apresentação em 30/11/2026.
 
 ## 1. Base verificada
 
-- O 8B foi publicado em `c01c9cc`. O 9A foi publicado em `bc0ef2d`, checkpoint do `HEAD` e da referência local `origin/main` na revisão do 9B. O 9B está apto para commit na árvore de trabalho. A publicação depende de commit e push.
+- O 8B foi publicado em `c01c9cc`, o 9A em `bc0ef2d` e o 9B em `f2856b1`. Na revisão final do 10A, `HEAD` e a referência local `origin/main` apontavam para `f2856b1`. O 10A foi validado na árvore de trabalho e está apto para commit. A publicação depende de commit e push.
 - O 6E foi concluído e publicado em `d2ca25a`, com a estratégia de contingência frontend e os atributos para arquivos binários. O 7A foi concluído e publicado em `23ed409`, com a estrutura de estoque PEPS e a V8. Na revisão do 7B, `HEAD` e a referência local `origin/main` apontavam para `23ed409`. O 7B foi concluído e validado na árvore de trabalho.
 - O 7B foi publicado em `a98a22e`, checkpoint de `HEAD` e da referência local `origin/main` na revisão do 8A. O 8A foi concluído e validado na árvore de trabalho, com aquisição patrimonial integrada e schema V9.
 - O 8A foi publicado em `b7684c4` (`feat: implement asset management and acquisition accounting`), checkpoint da revisão do 8B.
@@ -15,6 +15,8 @@ Atualização em 28/11/2026, após a conclusão técnica do incremento 9B de rev
 - No incremento 6, foram compiladas 50 fontes principais e 15 fontes de teste. Flyway V1–V7 validado, schema `public` na V7 e Hibernate em `ddl-auto: validate`.
 
 ## 2. Evidência de regressão
+
+No 10A, a execução de `.\scripts\test.ps1` pelo desenvolvedor terminou em 28/11/2026 às 01:56:13 (UTC−03:00), em 03:13 min, com `BUILD SUCCESS`. Os 18 relatórios Surefire confirmam **212 testes aprovados, zero falhas, erros ou ignorados**. As 17 classes anteriores somam 204 testes e `GerenciamentoContabilServiceTest` passou nos oito casos declarados na fonte. As 76 fontes principais e as 19 fontes de teste precedem as classes compiladas entre 01:53:13 e 01:53:32. Os relatórios foram gerados entre 01:54:12 e 01:56:13. A execução usou PostgreSQL 18.4 no banco `lex_test`, com 15 migrations validadas e schema público na V15. A revisão manteve a execução original como evidência.
 
 No 5A, a execução de 26/11/2026 terminou às 20:10:57 (UTC−03:00), em 01:03 min, com `BUILD SUCCESS`. Foram aprovados **110 testes**, incluindo os cinco de `BalanceteServiceTest`, com zero falhas, erros ou ignorados.
 
@@ -291,6 +293,20 @@ Os testes do 7A usam partidas de fixture para satisfazer o vínculo obrigatório
 - A V15 reutiliza o estorno contábil único e a integridade referencial da V5. Expõe seus efeitos operacionais por data e registra os dados de reversão da depreciação. O índice parcial substitui a unicidade anterior por uma única apropriação efetiva por ativo e competência, preservando as já revertidas. As regras de última operação, dependências e calendário de origem são verificadas nos serviços.
 - Estorno entre exercícios, reversão da reversão, baixa por alienação, reabertura e reprocessamento histórico ficam fora do 9B.
 
+### Contratos e garantias do incremento 10A
+
+| Serviço | Contrato público | DTOs |
+|---|---|---|
+| `EmpresaService` | `cadastrar(usuarioId, dados, inicioEscrituracao)`, `listar(usuarioId)`, `consultar(empresaId, usuarioId)`, `atualizar(empresaId, usuarioId, dados)`, `arquivar(empresaId, usuarioId, motivo)` e `reativar(empresaId, usuarioId)` | `EmpresaCadastrada` e `EmpresaCadastrada.Dados` |
+| `PlanoContasService` | `consultar(empresaId, usuarioId)`. O provisionamento legado é reutilizado pelo cadastro | `PlanoContabil` e `PlanoContabil.Conta` |
+| `CalendarioContabilService` | `criarInicial(empresaId, usuarioId, inicioEscrituracao)`, `criarSucessor(empresaId, usuarioId, ano)`, `provisionarCompetencias(empresaId, usuarioId, exercicioId, inicioEscrituracao)`, `listarExercicios`, `consultarExercicio`, `listarCompetencias` e `consultarCompetencia` | `CalendarioContabil.Exercicio` e `CalendarioContabil.Competencia` |
+
+- O cadastro exige usuário ativo e razão social. Nome fantasia e CNPJ são opcionais. Quando informado, o CNPJ segue o formato de 14 dígitos e a unicidade global do banco. A atualização se restringe a esses três campos. Identidade e titularidade são preservadas. Os contratos recebem o identificador do usuário autorizado, que a futura camada HTTP deverá obter da sessão autenticada. Os DTOs imutáveis contêm apenas dados necessários ao contrato.
+- O cadastro grava em uma transação a empresa, a cópia do modelo padrão ativo, o exercício inicial, as competências e os eventos de sucesso. A cópia mantém a hierarquia, a natureza e as classificações das contas e remapeia os vínculos das redutoras, preservando as referências ao modelo. Uma falha no evento final reverteu todas as gravações no teste de integração. A auditoria registra referências à empresa, ao responsável e à entidade e, quando aplicável, os dados anteriores e novos. O fluxo de cadastro audita a cópia do plano.
+- O exercício inicial segue o ano civil de 1900 a 9999. As competências vão do mês informado até dezembro, e a abertura por migração continua disponível no serviço específico. A complementação respeita o início aplicável, preserva as competências existentes e exige exercício aberto. O sucessor preparado é consecutivo e recebe janeiro a dezembro. A confirmação e o fechamento exigem continuidade. O fechamento anual pode criar o sucessor automaticamente e é responsável pelo transporte patrimonial.
+- O calendário usa o bloqueio transacional por empresa da V12. A complementação e o fechamento anual adquirem esse bloqueio antes das competências em ordem cronológica e dos exercícios. A cópia concorrente do plano é serializada na empresa e protegida pela unicidade do plano. Os testes concorrentes confirmaram uma única criação inicial e uma única complementação efetiva. As migrations V1–V15 são idênticas às do checkpoint.
+- O arquivamento registra motivo, responsável e data. A reativação exige o titular ativo e uma empresa arquivada. O titular mantém acesso ao cadastro, ao plano e ao calendário, com o histórico preservado. A edição cadastral e os fluxos contábeis exigem empresa ativa. A emissão de Diário, Razão, Balancete, BP e DRE também exige empresa ativa, inclusive para datas históricas. Em rotinas legadas que validam a situação apenas na entrada, como a alteração de partidas em rascunho e a manutenção do catálogo de estoque, uma operação já autorizada pode concorrer com o arquivamento.
+
 ## 4. Ambiente de execução
 
 | Perfil | JDBC | Role | Variáveis |
@@ -317,7 +333,7 @@ O modo padrão do script foi validado nas suítes de 68, 87, 92, 97, 105, 110, 1
 
 ## 5. Próxima etapa e contingência frontend — 28/11/2026
 
-O 9B está tecnicamente concluído na árvore de trabalho. A próxima etapa prevista é o 10A, gerenciamento empresarial e calendário.
+O 10A está tecnicamente concluído na árvore de trabalho. A próxima etapa prevista é o 10B, autenticação e segurança.
 
 **Regra da escrituração efetiva.** Lançamentos `CONFIRMADOS`, inclusive os estornos confirmados, e lançamentos originais `ESTORNADOS` integram a escrituração. Cada um produz efeitos na sua própria data contábil, respeitado o corte do relatório. Lançamentos em `RASCUNHO` ficam fora dos saldos. O original e seu estorno podem produzir efeitos em períodos diferentes.
 
