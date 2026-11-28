@@ -12,7 +12,10 @@ public record FichaAtivo(
         BigDecimal valorResidual, Integer vidaUtilMeses, BigDecimal baseDepreciavel, UUID contaRedutoraId,
         UUID contaDespesaId, Situacao situacao, UUID lancamentoId, UUID exercicioAquisicaoId, long numeroContabil,
         BigDecimal depreciacaoAcumulada, BigDecimal valorContabilLiquido, BigDecimal baseDepreciavelRemanescente,
-        int vidaUtilConsumidaMeses, int vidaUtilRemanescenteMeses, List<ApropriacaoDepreciacao> apropriacoes
+        int vidaUtilConsumidaMeses, int vidaUtilRemanescenteMeses, List<ApropriacaoDepreciacao> apropriacoes,
+        Origem origem, UUID lancamentoAberturaId, UUID exercicioAberturaId, LocalDate dataAbertura,
+        YearMonth marcoImportacao, YearMonth primeiraCompetenciaLex, int mesesConsumidosNaImportacao,
+        BigDecimal depreciacaoAcumuladaImportada, BigDecimal depreciacaoApropriadaLex
 ) {
     public FichaAtivo {
         apropriacoes = List.copyOf(apropriacoes);
@@ -24,5 +27,9 @@ public record FichaAtivo(
 
     public enum Situacao {
         AGUARDANDO_DISPONIBILIDADE, DISPONIBILIDADE_REGISTRADA
+    }
+
+    public enum Origem {
+        AQUISICAO, IMPORTACAO
     }
 }

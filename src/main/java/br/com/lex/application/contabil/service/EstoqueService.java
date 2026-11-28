@@ -3,6 +3,7 @@ package br.com.lex.application.contabil.service;
 import br.com.lex.application.contabil.dto.AberturaContabil.SaldoPorConta;
 import br.com.lex.application.contabil.dto.OperacaoEstoque;
 import br.com.lex.application.contabil.dto.OperacaoEstoqueConfirmada;
+import br.com.lex.application.contabil.dto.SaldoInicialEstoque;
 import br.com.lex.domain.contabil.entity.Empresa;
 import br.com.lex.domain.contabil.entity.ExercicioContabil;
 import br.com.lex.domain.contabil.entity.LancamentoContabil;
@@ -42,7 +43,7 @@ import java.util.UUID;
 public class EstoqueService {
 
     // Códigos de referência do modelo padrão versão 1, sem depender do código no plano da empresa.
-    private static final String MERCADORIAS = "1.1.03.001";
+    static final String MERCADORIAS = "1.1.03.001";
     private static final String RECEITA = "4.1.001";
     private static final String CMV = "5.1.001";
     private static final String CAIXA = "1.1.01.001";
@@ -94,6 +95,52 @@ public class EstoqueService {
         contabilidade.validarAcessoOperacional(empresaId, usuarioId);
         buscarProduto(empresaId, produtoId);
         return List.copyOf(movimentos.alocacoes(empresaId, produtoId, saidaId));
+    }
+
+    /** Vincula um inventário integral à abertura existente, na própria data da migração. */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public List<Movimento> importarSaldoInicial(SaldoInicialEstoque saldo) {
+        if (saldo == null || saldo.lotes().isEmpty() || saldo.lotes().stream().anyMatch(lote -> lote.produtoId() == null)) {
+            throw new IllegalArgumentException("Informe ao menos um lote com produto para a importação.");
+        }
+        validarIsolamento();
+        UUID empresaId = saldo.empresaId();
+        LancamentoContabil abertura = contabilidade.bloquearAberturaParaImportacao(
+                empresaId, saldo.usuarioId(), saldo.aberturaId(), LockModeType.PESSIMISTIC_READ);
+        if (movimentos.existeVinculado(empresaId, abertura.getId())) {
+            throw new IllegalStateException("A abertura já possui lotes iniciais importados.");
+        }
+        UUID mercadorias = resolverConta(empresaId, MERCADORIAS);
+        BigDecimal saldoContabil = contabilidade.saldosDaAbertura(abertura).getOrDefault(mercadorias, BigDecimal.ZERO);
+
+        var lotes = saldo.lotes().stream().map(lote -> {
+            var contexto = new Contexto(empresaId, saldo.usuarioId(), abertura.getExercicioId(),
+                    abertura.getPeriodoId(), lote.produtoId(), abertura.getData());
+            return prepararEntrada(contexto, lote.quantidade(), lote.custoUnitario());
+        }).toList();
+        BigDecimal total = lotes.stream().map(lote -> lote.movimento().valorTotal())
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (total.compareTo(saldoContabil) != 0) {
+            throw new IllegalArgumentException("O custo total dos lotes deve corresponder ao débito de Mercadorias na abertura.");
+        }
+
+        for (UUID produtoId : saldo.lotes().stream().map(SaldoInicialEstoque.Lote::produtoId).distinct().sorted().toList()) {
+            validarProdutoAtivo(bloquearProduto(empresaId, produtoId));
+            if (movimentos.ultimaData(empresaId, produtoId) != null) {
+                throw new IllegalStateException("Importe o saldo inicial antes da primeira movimentação de cada produto.");
+            }
+        }
+
+        var importados = new ArrayList<Movimento>();
+        for (Entrada lote : lotes) {
+            Movimento movimento = gravarEntrada(lote);
+            vincularLancamento(movimento, abertura.getId());
+            auditarMovimento(movimento, abertura, "IMPORTAR_SALDO_INICIAL", null);
+            importados.add(new Movimento(movimento.id(), empresaId, movimento.produtoId(), movimento.exercicioId(),
+                    movimento.periodoId(), movimento.usuarioId(), movimento.data(), movimento.tipo(),
+                    movimento.quantidade(), movimento.valorTotal(), abertura.getId()));
+        }
+        return List.copyOf(importados);
     }
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
@@ -159,7 +206,15 @@ public class EstoqueService {
                 em.getReference(ExercicioContabil.class, movimento.exercicioId()),
                 em.getReference(PeriodoContabil.class, movimento.periodoId()),
                 movimento.data(), operacao.historico(), OrigemLancamento.ESTOQUE, partidas);
+        // A sequência permanece bloqueada. Releia a abertura antes de vincular e auditar a operação.
+        contabilidade.validarIntegralizacaoEstoque(movimento.empresaId(), movimento.data());
         vincularLancamento(movimento, lancamento.getId());
+        auditarMovimento(movimento, lancamento, acao, valor);
+        return new OperacaoEstoqueConfirmada(movimento.id(), lancamento.getId(), lancamento.getNumero(),
+                movimento.quantidade(), valor, movimento.valorTotal());
+    }
+
+    private void auditarMovimento(Movimento movimento, LancamentoContabil lancamento, String acao, BigDecimal valor) {
         jdbc.update("""
                 insert into auditoria_evento (empresa_id, usuario_id, entidade, entidade_id, acao, dados_novos)
                 values (?, ?, 'movimento_estoque', ?, ?, jsonb_build_object(
@@ -170,12 +225,16 @@ public class EstoqueService {
                 """, movimento.empresaId(), movimento.usuarioId(), movimento.id(), acao, movimento.produtoId(),
                 movimento.data(), lancamento.getId(), lancamento.getNumero(), movimento.quantidade(), valor,
                 movimento.valorTotal());
-        return new OperacaoEstoqueConfirmada(movimento.id(), lancamento.getId(), lancamento.getNumero(),
-                movimento.quantidade(), valor, movimento.valorTotal());
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
     Movimento registrarEntrada(Contexto contexto, BigDecimal quantidade, BigDecimal custoUnitario) {
+        Entrada entrada = prepararEntrada(contexto, quantidade, custoUnitario);
+        prepararMovimento(contexto);
+        return gravarEntrada(entrada);
+    }
+
+    private Entrada prepararEntrada(Contexto contexto, BigDecimal quantidade, BigDecimal custoUnitario) {
         BigDecimal unidades = positivo(quantidade, 19, 6, "Quantidade");
         BigDecimal custo = positivo(custoUnitario, 19, 8, "Custo unitário");
         BigDecimal total = unidades.multiply(custo).setScale(2, RoundingMode.HALF_UP);
@@ -183,10 +242,13 @@ public class EstoqueService {
             throw new IllegalArgumentException("O custo total de uma entrada deve atingir pelo menos um centavo.");
         }
 
-        prepararMovimento(contexto);
-        Movimento entrada = novoMovimento(contexto, Tipo.ENTRADA, unidades, total);
+        return new Entrada(novoMovimento(contexto, Tipo.ENTRADA, unidades, total), custo);
+    }
+
+    private Movimento gravarEntrada(Entrada lote) {
+        Movimento entrada = lote.movimento();
         movimentos.inserir(entrada);
-        movimentos.inserirLote(entrada, custo);
+        movimentos.inserirLote(entrada, lote.custoUnitario());
         return entrada;
     }
 
@@ -228,18 +290,27 @@ public class EstoqueService {
     }
 
     private void prepararMovimento(Contexto contexto) {
-        if (!"read committed".equals(jdbc.queryForObject("show transaction_isolation", String.class))) {
-            throw new IllegalStateException("A movimentação de estoque exige READ COMMITTED.");
-        }
+        validarIsolamento();
         contabilidade.validarDestinoOperacional(contexto.empresaId(), contexto.usuarioId(),
                 contexto.exercicioId(), contexto.periodoId(), contexto.data());
         ProdutoEstoque produto = bloquearProduto(contexto.empresaId(), contexto.produtoId());
-        if (!produto.isAtivo()) {
-            throw new IllegalStateException("O produto deve estar ativo para movimentação.");
-        }
+        validarProdutoAtivo(produto);
+        contabilidade.validarIntegralizacaoEstoque(contexto.empresaId(), contexto.data());
         LocalDate ultimaData = movimentos.ultimaData(contexto.empresaId(), produto.getId());
         if (ultimaData != null && contexto.data().isBefore(ultimaData)) {
             throw new IllegalStateException("A data não pode anteceder a última movimentação do produto.");
+        }
+    }
+
+    private void validarIsolamento() {
+        if (!"read committed".equals(jdbc.queryForObject("show transaction_isolation", String.class))) {
+            throw new IllegalStateException("A movimentação de estoque exige READ COMMITTED.");
+        }
+    }
+
+    private void validarProdutoAtivo(ProdutoEstoque produto) {
+        if (!produto.isAtivo()) {
+            throw new IllegalStateException("O produto deve estar ativo para movimentação.");
         }
     }
 
@@ -310,6 +381,9 @@ public class EstoqueService {
     }
 
     record Contexto(UUID empresaId, UUID usuarioId, UUID exercicioId, UUID periodoId, UUID produtoId, LocalDate data) {
+    }
+
+    private record Entrada(Movimento movimento, BigDecimal custoUnitario) {
     }
 
     record Saida(Movimento movimento, List<Alocacao> alocacoes) {

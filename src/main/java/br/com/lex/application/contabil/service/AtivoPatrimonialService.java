@@ -4,6 +4,7 @@ import br.com.lex.application.contabil.dto.AberturaContabil.SaldoPorConta;
 import br.com.lex.application.contabil.dto.AquisicaoAtivo;
 import br.com.lex.application.contabil.dto.ApropriacaoDepreciacao;
 import br.com.lex.application.contabil.dto.FichaAtivo;
+import br.com.lex.application.contabil.dto.SaldoInicialPatrimonial;
 import br.com.lex.domain.contabil.entity.AtivoPatrimonial;
 import br.com.lex.domain.contabil.entity.Empresa;
 import br.com.lex.domain.contabil.entity.ExercicioContabil;
@@ -21,6 +22,7 @@ import br.com.lex.domain.contabil.enums.StatusPeriodo;
 import br.com.lex.domain.contabil.enums.TipoConta;
 import br.com.lex.domain.contabil.enums.TipoPartida;
 import br.com.lex.domain.contabil.repository.AtivoPatrimonialRepository;
+import br.com.lex.domain.contabil.repository.AtivoPatrimonialRepository.ValoresImportados;
 import br.com.lex.domain.contabil.repository.ApropriacaoDepreciacaoRepository;
 import br.com.lex.domain.contabil.repository.ContaContabilRepository;
 import br.com.lex.domain.contabil.repository.ContaContabilRepository.ContaDoPlano;
@@ -39,9 +41,12 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.YearMonth;
+import java.time.temporal.ChronoUnit;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -51,8 +56,9 @@ import static java.util.stream.Collectors.groupingBy;
 @RequiredArgsConstructor
 public class AtivoPatrimonialService {
 
+    private static final BigDecimal ZERO = new BigDecimal("0.00");
     // Referências do modelo padrão V1, provisionado pela V3.
-    private static final String IMOBILIZADO = "1.2.03";
+    static final String IMOBILIZADO = "1.2.03";
     private static final String TERRENOS = "1.2.03.001";
     private static final List<String> CONTRAPARTIDAS = List.of("1.1.01.001", "1.1.01.002", "2.1.01.001", "2.2.02.001");
     private static final List<String> DESPESAS_DEPRECIACAO = List.of("6.1.005", "6.2.006");
@@ -78,7 +84,8 @@ public class AtivoPatrimonialService {
         contabilidade.validarDestinoOperacional(empresa, usuario, aquisicao.exercicioId(), aquisicao.periodoId(),
                 aquisicao.dataAquisicao());
         BigDecimal custo = PartidaContabil.normalizarValor(aquisicao.custoAquisicao());
-        BigDecimal residual = validarDadosPatrimoniais(aquisicao, custo);
+        BigDecimal residual = validarDadosPatrimoniais(aquisicao.dataAquisicao(), aquisicao.dataDisponibilidade(),
+                aquisicao.depreciavel(), aquisicao.vidaUtilMeses(), aquisicao.contaDespesaId(), aquisicao.valorResidual(), custo);
         validarCompetenciasDaDisponibilidade(empresa, aquisicao.dataAquisicao().getYear(), aquisicao.dataDisponibilidade(),
                 aquisicao.depreciavel() ? custo.subtract(residual) : BigDecimal.ZERO, aquisicao.vidaUtilMeses());
         String codigo = textoObrigatorio(Objects.toString(aquisicao.codigo(), "").toUpperCase(Locale.ROOT),
@@ -119,14 +126,132 @@ public class AtivoPatrimonialService {
         return ficha(ativo, List.of());
     }
 
+    /** Cada lote completa as contas patrimoniais selecionadas e suas redutoras na abertura. */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public List<FichaAtivo> importarSaldoInicial(SaldoInicialPatrimonial saldo) {
+        if (saldo == null || saldo.bens().isEmpty()) {
+            throw new IllegalArgumentException("Informe ao menos um bem para a importação patrimonial.");
+        }
+        validarIsolamento();
+        UUID empresa = saldo.empresaId();
+        LancamentoContabil abertura = contabilidade.bloquearAberturaParaImportacao(
+                empresa, saldo.usuarioId(), saldo.aberturaId(), LockModeType.PESSIMISTIC_WRITE);
+        var estrutura = contas.buscarEstruturaDoPlano(empresa);
+        var bens = saldo.bens().stream().map(bem -> prepararBemImportado(saldo.usuarioId(), abertura, estrutura, bem)).toList();
+        var codigos = new HashSet<String>();
+        var idsContas = new HashSet<UUID>();
+        for (AtivoPatrimonial bem : bens) {
+            if (!codigos.add(bem.getCodigo())) {
+                throw new IllegalArgumentException("Código patrimonial duplicado no lote: " + bem.getCodigo());
+            }
+            idsContas.add(bem.getContaPatrimonialId());
+            if (bem.isDepreciavel()) {
+                idsContas.add(bem.getContaRedutoraId());
+                idsContas.add(bem.getContaDespesaId());
+            }
+        }
+        if (ativos.existsByEmpresaIdAndCodigoIn(empresa, codigos)) {
+            throw new IllegalStateException("Já existe um ativo com um dos códigos patrimoniais informados.");
+        }
+        if (contas.bloquearContasAptas(abertura.getPlanoContasId(), idsContas).size() != idsContas.size()) {
+            throw new IllegalStateException("Todas as contas do ativo devem ser analíticas e ativas no plano da empresa.");
+        }
+        validarLimitesDaAbertura(abertura, bens);
+        return ativos.saveAllAndFlush(bens).stream().map(bem -> {
+            auditarImportacao(bem, abertura);
+            return ficha(bem, List.of());
+        }).toList();
+    }
+
+    private AtivoPatrimonial prepararBemImportado(UUID usuarioId, LancamentoContabil abertura,
+                                                    List<ContaDoPlano> estrutura, SaldoInicialPatrimonial.Bem bem) {
+        LocalDate dataAbertura = abertura.getData();
+        if (bem.dataAquisicao() == null || bem.dataAquisicao().getYear() < 1 || bem.dataAquisicao().isAfter(dataAbertura)) {
+            throw new IllegalArgumentException("A data histórica de aquisição deve ser válida e igual ou anterior à abertura.");
+        }
+        if (bem.dataDisponibilidade() != null && bem.dataDisponibilidade().getYear() > 9999) {
+            throw new IllegalArgumentException("A disponibilidade para uso está fora do calendário contábil suportado.");
+        }
+        BigDecimal custo = PartidaContabil.normalizarValor(bem.custoHistorico());
+        BigDecimal residual = validarDadosPatrimoniais(bem.dataAquisicao(), bem.dataDisponibilidade(),
+                bem.depreciavel(), bem.vidaUtilMeses(), bem.contaDespesaId(), bem.valorResidual(), custo);
+        BigDecimal acumulado = bem.depreciacaoAcumulada() != null && bem.depreciacaoAcumulada().signum() == 0
+                ? ZERO : PartidaContabil.normalizarValor(bem.depreciacaoAcumulada());
+        YearMonth marco = validarHistoricoImportado(bem, dataAbertura, custo.subtract(residual), acumulado);
+        UUID empresa = abertura.getEmpresaId();
+        ContaDoPlano patrimonial = validarContaPatrimonial(empresa, bem.contaPatrimonialId(), bem.depreciavel(), estrutura);
+        UUID redutora = null;
+        if (bem.depreciavel()) {
+            redutora = resolverRedutora(estrutura, patrimonial.getId());
+            validarDespesa(empresa, bem.contaDespesaId(), estrutura);
+        }
+        String codigo = textoObrigatorio(Objects.toString(bem.codigo(), "").toUpperCase(Locale.ROOT), 50, "Código patrimonial");
+        String descricao = textoObrigatorio(bem.descricao(), 200, "Descrição");
+        var ativo = new AtivoPatrimonial(empresa, abertura.getPlanoContasId(), usuarioId, codigo, descricao,
+                patrimonial.getId(), redutora, bem.contaDespesaId(), bem.dataAquisicao(), bem.dataDisponibilidade(),
+                custo, bem.depreciavel(), residual, bem.vidaUtilMeses());
+        ativo.vincularAbertura(abertura, acumulado, bem.mesesConsumidos(), marco);
+        YearMonth primeira = ativo.primeiraCompetenciaLex();
+        if (primeira != null && ativo.baseInicialLex().signum() > 0) {
+            validarCompetenciasDaDisponibilidade(empresa, dataAbertura.getYear(), primeira.atDay(1),
+                    ativo.baseInicialLex(), ativo.vidaUtilInicialLex());
+        }
+        return ativo;
+    }
+
+    private YearMonth validarHistoricoImportado(SaldoInicialPatrimonial.Bem bem, LocalDate abertura,
+                                                BigDecimal base, BigDecimal acumulado) {
+        YearMonth mesAbertura = YearMonth.from(abertura);
+        int consumidos = bem.mesesConsumidos();
+        int vidaUtil = bem.depreciavel() ? bem.vidaUtilMeses() : 0;
+        boolean disponivelNaAbertura = bem.dataDisponibilidade() != null && !bem.dataDisponibilidade().isAfter(abertura);
+        YearMonth marco = bem.mesAberturaJaApropriado() ? mesAbertura.plusMonths(1) : mesAbertura;
+        long mesesPossiveis = disponivelNaAbertura
+                ? ChronoUnit.MONTHS.between(YearMonth.from(bem.dataDisponibilidade()), marco) : 0;
+        if (consumidos < 0 || consumidos > vidaUtil || consumidos > mesesPossiveis
+                || (bem.mesAberturaJaApropriado() && consumidos == 0)) {
+            throw new IllegalArgumentException("Meses consumidos incompatíveis com a disponibilidade, a abertura ou a vida útil.");
+        }
+        if (((!bem.depreciavel() || consumidos == 0) && acumulado.signum() > 0)
+                || acumulado.compareTo(base) > 0
+                || (bem.depreciavel() && consumidos == vidaUtil && acumulado.compareTo(base) != 0)) {
+            throw new IllegalArgumentException("Depreciação acumulada incompatível com a base depreciável ou a vida útil consumida.");
+        }
+        return marco;
+    }
+
+    private void validarLimitesDaAbertura(LancamentoContabil abertura, List<AtivoPatrimonial> bens) {
+        Map<UUID, BigDecimal> pedido = new HashMap<>();
+        for (AtivoPatrimonial bem : bens) {
+            pedido.merge(bem.getContaPatrimonialId(), bem.getCustoAquisicao(), BigDecimal::add);
+            if (bem.isDepreciavel()) {
+                pedido.merge(bem.getContaRedutoraId(), bem.getDepreciacaoInicial().negate(), BigDecimal::add);
+            }
+        }
+        Map<UUID, BigDecimal> saldo = contabilidade.saldosDaAbertura(abertura);
+        for (ValoresImportados anterior : ativos.somarImportados(abertura.getEmpresaId(), abertura.getId())) {
+            saldo.merge(anterior.getContaPatrimonialId(), anterior.getCusto().negate(), BigDecimal::add);
+            if (anterior.getDepreciacao().signum() > 0) {
+                saldo.merge(anterior.getContaRedutoraId(), anterior.getDepreciacao(), BigDecimal::add);
+            }
+        }
+        pedido.forEach((conta, valor) -> {
+            BigDecimal disponivel = saldo.getOrDefault(conta, ZERO);
+            if (valor.compareTo(disponivel) != 0) {
+                throw new IllegalArgumentException("O lote deve completar o saldo disponível da abertura na conta " + conta
+                        + " (disponível " + disponivel.toPlainString() + ", solicitado " + valor.toPlainString() + ").");
+            }
+        });
+    }
+
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public FichaAtivo registrarDisponibilidade(UUID empresaId, UUID usuarioId, UUID exercicioId, UUID periodoId,
                                                UUID ativoId, LocalDate data) {
         validarIsolamento();
         contabilidade.validarDestinoOperacional(empresaId, usuarioId, exercicioId, periodoId, data);
         AtivoPatrimonial ativo = buscarAtivo(empresaId, ativoId);
-        validarCompetenciasDaDisponibilidade(empresaId, data.getYear(), data, ativo.baseDepreciavel(),
-                ativo.getVidaUtilMeses());
+        validarCompetenciasDaDisponibilidade(empresaId, data.getYear(), data, ativo.baseInicialLex(),
+                ativo.vidaUtilInicialLex());
         em.refresh(ativo, LockModeType.PESSIMISTIC_WRITE);
         if (!apropriacoes.listar(empresaId, ativoId).isEmpty()) {
             throw new IllegalStateException("O ativo já possui competências de depreciação processadas.");
@@ -236,19 +361,19 @@ public class AtivoPatrimonialService {
         }
     }
 
-    private BigDecimal validarDadosPatrimoniais(AquisicaoAtivo aquisicao, BigDecimal custo) {
-        if (aquisicao.dataDisponibilidade() != null && aquisicao.dataDisponibilidade().isBefore(aquisicao.dataAquisicao())) {
+    private BigDecimal validarDadosPatrimoniais(LocalDate dataAquisicao, LocalDate disponibilidade, boolean depreciavel,
+                                                 Integer vidaUtil, UUID despesa, BigDecimal residual, BigDecimal custo) {
+        if (disponibilidade != null && disponibilidade.isBefore(dataAquisicao)) {
             throw new IllegalArgumentException("A disponibilidade para uso não pode anteceder a aquisição.");
         }
-        BigDecimal residual = aquisicao.valorResidual();
         if (residual == null || residual.signum() < 0 || residual.compareTo(custo) > 0) {
             throw new IllegalArgumentException("O valor residual deve estar entre zero e o custo de aquisição.");
         }
-        if (aquisicao.depreciavel()) {
-            if (aquisicao.vidaUtilMeses() == null || aquisicao.vidaUtilMeses() <= 0) {
+        if (depreciavel) {
+            if (vidaUtil == null || vidaUtil <= 0) {
                 throw new IllegalArgumentException("Informe vida útil positiva em meses para o ativo depreciável.");
             }
-        } else if (aquisicao.vidaUtilMeses() != null || aquisicao.contaDespesaId() != null) {
+        } else if (vidaUtil != null || despesa != null) {
             throw new IllegalArgumentException("Vida útil e conta de despesa são aplicáveis somente a ativos depreciáveis.");
         }
         return residual.signum() == 0 ? BigDecimal.ZERO.setScale(2) : PartidaContabil.normalizarValor(residual);
@@ -313,20 +438,45 @@ public class AtivoPatrimonialService {
     }
 
     private FichaAtivo ficha(AtivoPatrimonial ativo, List<ApropriacaoDepreciacao> historico) {
-        LancamentoContabil lancamento = ativo.getLancamentoAquisicao();
+        LancamentoContabil abertura = ativo.getLancamentoAbertura();
+        LancamentoContabil lancamento = ativo.isImportado() ? abertura : ativo.getLancamentoAquisicao();
         FichaAtivo.Situacao situacao = ativo.getDataDisponibilidade() == null
                 ? FichaAtivo.Situacao.AGUARDANDO_DISPONIBILIDADE : FichaAtivo.Situacao.DISPONIBILIDADE_REGISTRADA;
-        BigDecimal acumulada = historico.stream().map(ApropriacaoDepreciacao::valor)
+        BigDecimal apropriadaLex = historico.stream().map(ApropriacaoDepreciacao::valor)
                 .reduce(BigDecimal.ZERO.setScale(2), BigDecimal::add);
-        int mesesConsumidos = historico.size();
-        int mesesRestantes = ativo.isDepreciavel() ? ativo.getVidaUtilMeses() - mesesConsumidos : 0;
+        BigDecimal acumulada = ativo.getDepreciacaoInicial().add(apropriadaLex);
+        int mesesConsumidos = ativo.getMesesConsumidosInicio() + historico.size();
+        int mesesRestantes = ativo.vidaUtilInicialLex() - historico.size();
         return new FichaAtivo(ativo.getId(), ativo.getEmpresaId(), ativo.getUsuarioId(), ativo.getCodigo(),
                 ativo.getDescricao(), ativo.getContaPatrimonialId(), ativo.getDataAquisicao(), ativo.getDataDisponibilidade(),
                 ativo.getCustoAquisicao(), ativo.isDepreciavel(), ativo.getValorResidual(), ativo.getVidaUtilMeses(),
                 ativo.baseDepreciavel(), ativo.getContaRedutoraId(), ativo.getContaDespesaId(), situacao,
-                lancamento.getId(), lancamento.getExercicioId(), lancamento.getNumero(), acumulada,
+                lancamento.getId(), ativo.isImportado() ? null : lancamento.getExercicioId(), lancamento.getNumero(), acumulada,
                 ativo.getCustoAquisicao().subtract(acumulada), ativo.baseDepreciavel().subtract(acumulada),
-                mesesConsumidos, mesesRestantes, historico);
+                mesesConsumidos, mesesRestantes, historico,
+                ativo.isImportado() ? FichaAtivo.Origem.IMPORTACAO : FichaAtivo.Origem.AQUISICAO,
+                abertura == null ? null : abertura.getId(), abertura == null ? null : abertura.getExercicioId(),
+                abertura == null ? null : abertura.getData(),
+                abertura == null ? null : YearMonth.from(ativo.getInicioDepreciacaoLex()),
+                ativo.primeiraCompetenciaLex(), ativo.getMesesConsumidosInicio(), ativo.getDepreciacaoInicial(), apropriadaLex);
+    }
+
+    private void auditarImportacao(AtivoPatrimonial ativo, LancamentoContabil abertura) {
+        jdbc.update("""
+                insert into auditoria_evento (empresa_id, usuario_id, entidade, entidade_id, acao, dados_novos)
+                values (?, ?, 'ativo_patrimonial', ?, 'IMPORTAR_SALDO_INICIAL', jsonb_build_object(
+                    'codigo', cast(? as text), 'aberturaId', cast(? as uuid), 'numeroContabil', cast(? as bigint),
+                    'dataAquisicao', cast(? as date), 'dataDisponibilidade', cast(? as date),
+                    'custoHistorico', cast(? as numeric), 'valorResidual', cast(? as numeric),
+                    'depreciacaoImportada', cast(? as numeric), 'vidaUtilMeses', cast(? as integer),
+                    'mesesConsumidos', cast(? as integer), 'marcoLex', cast(? as date),
+                    'contaPatrimonialId', cast(? as uuid), 'contaRedutoraId', cast(? as uuid),
+                    'contaDespesaId', cast(? as uuid)))
+                """, ativo.getEmpresaId(), ativo.getUsuarioId(), ativo.getId(), ativo.getCodigo(), abertura.getId(),
+                abertura.getNumero(), ativo.getDataAquisicao(), ativo.getDataDisponibilidade(), ativo.getCustoAquisicao(),
+                ativo.getValorResidual(), ativo.getDepreciacaoInicial(), ativo.getVidaUtilMeses(),
+                ativo.getMesesConsumidosInicio(), ativo.getInicioDepreciacaoLex(), ativo.getContaPatrimonialId(),
+                ativo.getContaRedutoraId(), ativo.getContaDespesaId());
     }
 
     private void auditar(AtivoPatrimonial ativo) {

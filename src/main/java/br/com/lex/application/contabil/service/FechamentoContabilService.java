@@ -54,6 +54,7 @@ public class FechamentoContabilService {
     private final PlanoContasRepository planos;
     private final ContaContabilRepository contas;
     private final BalanceteService balancete;
+    private final ConciliacaoOperacionalService conciliacao;
     private final LancamentoContabilService escrituracao;
     private final ApropriacaoDepreciacaoRepository depreciacoes;
     private final EntityManager em;
@@ -84,7 +85,9 @@ public class FechamentoContabilService {
             throw new IllegalStateException("O período possui lançamentos em rascunho.");
         }
         validarDepreciacao(empresaId, periodo.getDataFim());
-        validarEquilibrio(balancete.emitir(empresaId, usuarioId, exercicioId, periodo.getDataInicio(), periodo.getDataFim()));
+        Balancete apurado = balancete.emitir(empresaId, usuarioId, exercicioId, periodo.getDataInicio(), periodo.getDataFim());
+        validarEquilibrio(apurado);
+        conciliacao.validarFechamento(apurado);
         periodo.encerrar();
         em.flush();
         auditar(empresaId, usuarioId, "PERIODO_CONTABIL", periodoId, "ENCERRAR_PERIODO",
@@ -139,6 +142,7 @@ public class FechamentoContabilService {
         validarDepreciacao(empresaId, dezembro.getDataFim());
         Balancete apurado = balancete.emitir(empresaId, usuarioId, exercicioId, origem.getDataInicio(), origem.getDataFim());
         validarEquilibrio(apurado);
+        conciliacao.validarFechamento(apurado);
         PartidasTecnicas tecnicas = prepararPartidas(empresaId, apurado);
         bloquearContas(empresaId, tecnicas);
 

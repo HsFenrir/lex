@@ -18,6 +18,40 @@ import java.util.UUID;
 public interface PartidaContabilRepository
         extends JpaRepository<PartidaContabil, UUID> {
 
+    String PARTIDAS_POR_ORIGEM_ATE = """
+            select p.contaContabilId as contaId, p.tipo as tipo, origem.origem as origem,
+                   sum(p.valor) as valor
+            from PartidaContabil p join p.lancamento l
+            join LancamentoContabil origem on origem.id = coalesce(l.estornoDeId, l.id)
+            join origem.exercicio e
+            where l.empresaId = :empresaId and l.data <= :fim
+              and l.status in (br.com.lex.domain.contabil.enums.StatusLancamento.CONFIRMADO,
+                               br.com.lex.domain.contabil.enums.StatusLancamento.ESTORNADO)
+            """;
+    String ABERTURA_DE_MIGRACAO = """
+            origem.origem = br.com.lex.domain.contabil.enums.OrigemLancamento.ABERTURA
+            and e.exercicioOrigemId is null
+            and not exists (select 1 from ExercicioContabil anterior
+                            where anterior.empresa.id = l.empresaId and anterior.ano < e.ano)
+            """;
+    String AGRUPAR_POR_ORIGEM = " group by p.contaContabilId, p.tipo, origem.origem";
+
+    @Query(PARTIDAS_POR_ORIGEM_ATE
+            + " and (origem.origem = br.com.lex.domain.contabil.enums.OrigemLancamento.MANUAL or ("
+            + ABERTURA_DE_MIGRACAO + "))" + AGRUPAR_POR_ORIGEM)
+    List<SaldoPorOrigem> somarMigracaoEManuaisAte(UUID empresaId, LocalDate fim);
+
+    @Query(PARTIDAS_POR_ORIGEM_ATE + " and p.contaContabilId = :contaId and "
+            + ABERTURA_DE_MIGRACAO + AGRUPAR_POR_ORIGEM)
+    List<SaldoPorOrigem> somarMigracaoDaContaAte(UUID empresaId, UUID contaId, LocalDate fim);
+
+    interface SaldoPorOrigem {
+        UUID getContaId();
+        TipoPartida getTipo();
+        OrigemLancamento getOrigem();
+        BigDecimal getValor();
+    }
+
     Optional<PartidaContabil> findByIdAndLancamentoId(UUID id, UUID lancamentoId);
 
     List<PartidaContabil> findAllByLancamentoIdOrderByIdAsc(

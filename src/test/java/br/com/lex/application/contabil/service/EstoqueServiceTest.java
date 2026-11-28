@@ -2,10 +2,13 @@ package br.com.lex.application.contabil.service;
 
 import br.com.lex.application.contabil.dto.AberturaContabil;
 import br.com.lex.application.contabil.dto.AberturaContabil.SaldoPorConta;
+import br.com.lex.application.contabil.dto.ConciliacaoOperacional.Diagnostico;
+import br.com.lex.application.contabil.dto.ConciliacaoOperacional.Item;
 import br.com.lex.application.contabil.dto.Dre.Rubrica;
 import br.com.lex.application.contabil.dto.LivroDiario;
 import br.com.lex.application.contabil.dto.OperacaoEstoque;
 import br.com.lex.application.contabil.dto.OperacaoEstoqueConfirmada;
+import br.com.lex.application.contabil.dto.SaldoInicialEstoque;
 import br.com.lex.application.contabil.service.EstoqueService.Contexto;
 import br.com.lex.application.contabil.service.EstoqueService.Ficha;
 import br.com.lex.application.contabil.service.EstoqueService.Saida;
@@ -24,6 +27,8 @@ import br.com.lex.domain.contabil.repository.MovimentoEstoqueRepository.Tipo;
 import jakarta.persistence.EntityManager;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.postgresql.util.PSQLException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -32,6 +37,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -74,6 +80,7 @@ class EstoqueServiceTest {
     @Autowired private PlanoContasService planos;
     @Autowired private ContaContabilRepository contas;
     @Autowired private FechamentoContabilService fechamento;
+    @Autowired private ConciliacaoOperacionalService conciliacao;
     @Autowired private LivroDiarioService diario;
     @Autowired private LivroRazaoService razao;
     @Autowired private BalanceteService balancete;
@@ -486,6 +493,9 @@ class EstoqueServiceTest {
             var confirmada = executar(schema, () -> estoque.registrarVenda(venda));
             assertThat(confirmada.numeroContabil()).isEqualTo(2L);
             assertThat(confirmada.custoEstoque()).isEqualByComparingTo("3");
+            var item = conciliarEstoque(schema, c, venda.exercicioId(), janeiro);
+            assertThat(item.diagnostico()).isEqualTo(Diagnostico.CONCILIADO);
+            assertThat(item.saldoOperacional()).isEqualByComparingTo("12.00");
             executar(schema, () -> {
                 assertThat(estoque.consultarAlocacoes(c.empresa(), c.usuario(), c.produto(), confirmada.movimentoId()))
                         .extracting(Alocacao::entradaId).containsExactly(compra.movimentoId());
@@ -519,6 +529,273 @@ class EstoqueServiceTest {
             assertThatThrownBy(() -> executar(schema,
                     () -> estoque.registrarVenda(operacao(c, DATA.plusDays(1), "1", "2", CAIXA))))
                     .hasMessageContaining("período deve estar aberto");
+        });
+    }
+
+    @Test
+    void conciliaEstoqueNaDataBaseAposComprasEVendasPosteriores() {
+        comCenario((schema, c) -> {
+            Cenario outra = executar(schema, this::criarCenario);
+            executar(schema, () -> estoque.registrarCompra(operacao(c, DATA, "3", "0.33333333", CAIXA)));
+            executar(schema, () -> estoque.registrarVenda(operacao(c, DATA.plusDays(1), "1", "1", CAIXA)));
+            executar(schema, () -> estoque.registrarCompra(operacao(c, DATA.plusDays(2), "1", "9", CAIXA)));
+
+            var antesDaVenda = conciliarEstoque(schema, c, c.exercicio(), DATA);
+            assertThat(antesDaVenda.saldoContabil()).isEqualByComparingTo("1.00");
+            assertThat(antesDaVenda.saldoOperacional()).isEqualByComparingTo("1.00");
+            assertThat(antesDaVenda.diagnostico()).isEqualTo(Diagnostico.CONCILIADO);
+            var depoisDaVenda = conciliarEstoque(schema, c, c.exercicio(), DATA.plusDays(1));
+            assertThat(depoisDaVenda.saldoContabil()).isEqualByComparingTo("0.67");
+            assertThat(depoisDaVenda.saldoOperacional()).isEqualByComparingTo("0.67");
+            assertThat(conciliarEstoque(schema, outra, outra.exercicio(), DATA).saldoOperacional()).isZero();
+            assertThatThrownBy(() -> executarConsulta(schema, () ->
+                    conciliacao.conciliar(c.empresa(), outra.usuario(), c.exercicio(), DATA)))
+                    .hasMessageContaining("não pertence ao usuário");
+        });
+    }
+
+    @Test
+    void importaInventarioNaAberturaAposUpgradeDaV12SemDuplicarEscrituracao() {
+        comSchema(schema -> {
+            migrar(schema, "12");
+            Cenario c = executar(schema, this::criarCenario);
+            UUID abertura = abrirEstoque(schema, c, "10.00");
+            migrar(schema, null);
+            var pedido = new SaldoInicialEstoque(c.empresa(), c.usuario(), abertura, List.of(
+                    new SaldoInicialEstoque.Lote(c.produto(), BigDecimal.ONE, new BigDecimal("4.00")),
+                    new SaldoInicialEstoque.Lote(c.produto(), BigDecimal.ONE, new BigDecimal("6.00"))));
+            assertThat(conciliarEstoque(schema, c, c.exercicio(), DATA).diagnostico())
+                    .isEqualTo(Diagnostico.SALDO_PENDENTE_DE_IMPORTACAO);
+            assertThatThrownBy(() -> executar(schema, () ->
+                    fechamento.encerrarPeriodo(c.empresa(), c.usuario(), c.exercicio(), c.periodo())))
+                    .hasMessageContaining("pendente de importação 10.00");
+
+            var importados = executar(schema, () -> estoque.importarSaldoInicial(pedido));
+            assertThat(importados).extracting(Movimento::lancamentoId).containsExactly(abertura, abertura);
+            assertThat(importados).extracting(Movimento::data).containsExactly(DATA, DATA);
+            executar(schema, () -> {
+                assertThat(jdbc.queryForObject("select count(*) from lancamento_contabil", Long.class)).isEqualTo(1L);
+                assertThat(jdbc.queryForObject("""
+                        select count(*) from auditoria_evento where acao = 'IMPORTAR_SALDO_INICIAL'
+                        and dados_novos->>'lancamentoId' = ?
+                        """, Long.class, abertura.toString())).isEqualTo(2L);
+                return null;
+            });
+            assertThatThrownBy(() -> executar(schema, () -> estoque.importarSaldoInicial(pedido)))
+                    .hasMessageContaining("já possui lotes");
+            assertThatThrownBy(() -> executar(schema, () -> lancamentos.criarRascunhoEstorno(
+                    c.empresa(), c.usuario(), abertura, c.exercicio(), c.periodo(), DATA, "Estorno")))
+                    .hasMessageContaining("lotes iniciais");
+
+            var venda = executar(schema, () -> estoque.registrarVenda(operacao(c, DATA, "1.5", "10", CAIXA)));
+            assertThat(venda.numeroContabil()).isEqualTo(2L);
+            assertThat(venda.custoEstoque()).isEqualByComparingTo("7.00");
+            var conciliado = conciliarEstoque(schema, c, c.exercicio(), DATA);
+            assertThat(conciliado.saldoOperacional()).isEqualByComparingTo("3.00");
+            assertThat(conciliado.diagnostico()).isEqualTo(Diagnostico.CONCILIADO);
+        });
+    }
+
+    @Test
+    void rejeitaInventarioDiferenteEReverteLotesEAuditoriaSeFalharNoUltimoLote() {
+        comCenario((schema, c) -> {
+            UUID abertura = abrirEstoque(schema, c, "10.00");
+            var primeiro = new SaldoInicialEstoque.Lote(c.produto(), BigDecimal.ONE, new BigDecimal("4.00"));
+            var incompleto = new SaldoInicialEstoque(c.empresa(), c.usuario(), abertura, List.of(primeiro));
+            assertThatThrownBy(() -> executar(schema, () -> estoque.importarSaldoInicial(incompleto)))
+                    .hasMessageContaining("débito de Mercadorias");
+
+            var completo = new SaldoInicialEstoque(c.empresa(), c.usuario(), abertura, List.of(primeiro,
+                    new SaldoInicialEstoque.Lote(c.produto(), BigDecimal.ONE, new BigDecimal("6.00"))));
+            executar(schema, () -> {
+                jdbc.execute("""
+                        alter table auditoria_evento add constraint teste_bloquear_importacao
+                        check (acao <> 'IMPORTAR_SALDO_INICIAL' or (dados_novos->>'custoEstoque')::numeric <> 6)
+                        """);
+                return null;
+            });
+            assertThatThrownBy(() -> executar(schema, () -> estoque.importarSaldoInicial(completo)))
+                    .isInstanceOf(DataIntegrityViolationException.class)
+                    .hasMessageContaining("teste_bloquear_importacao");
+            executar(schema, () -> {
+                assertThat(ficha(c).lotes()).isEmpty();
+                assertThat(ficha(c).movimentos()).isEmpty();
+                assertThat(jdbc.queryForObject("""
+                        select count(*) from auditoria_evento where acao = 'IMPORTAR_SALDO_INICIAL'
+                        """, Long.class)).isZero();
+                assertThat(jdbc.queryForObject("select ultimo_numero from sequencia_lancamento", Long.class)).isEqualTo(1L);
+                return null;
+            });
+        });
+    }
+
+    @Test
+    void fechamentoMensalBloqueiaDiferencaDeEstoqueEAceitaAposEstornoDoManual() {
+        comCenario((schema, c) -> {
+            executar(schema, () -> estoque.registrarCompra(operacao(c, DATA, "1", "4", CAIXA)));
+            UUID manual = executar(schema, () -> {
+                var rascunho = lancamentos.criarRascunho(c.empresa(), c.usuario(), c.exercicio(), c.periodo(),
+                        DATA, "Ajuste manual");
+                lancamentos.adicionarPartida(c.empresa(), c.usuario(), rascunho.getId(), c.contas().get(ESTOQUE),
+                        TipoPartida.DEBITO, new BigDecimal("0.01"), null);
+                lancamentos.adicionarPartida(c.empresa(), c.usuario(), rascunho.getId(), c.contas().get(CAIXA),
+                        TipoPartida.CREDITO, new BigDecimal("0.01"), null);
+                return lancamentos.confirmarLancamento(c.empresa(), c.usuario(), rascunho.getId()).getId();
+            });
+            var item = conciliarEstoque(schema, c, c.exercicio(), DATA);
+            assertThat(item.diagnostico()).isEqualTo(Diagnostico.DIVERGENCIA_LANCAMENTO_MANUAL);
+            assertThat(item.diferenca()).isEqualByComparingTo("0.01");
+            assertThatThrownBy(() -> executar(schema, () ->
+                    fechamento.encerrarPeriodo(c.empresa(), c.usuario(), c.exercicio(), c.periodo())))
+                    .hasMessageContaining(ESTOQUE).hasMessageContaining("diferença 0.01");
+            executar(schema, () -> {
+                var estorno = lancamentos.criarRascunhoEstorno(c.empresa(), c.usuario(), manual, c.exercicio(),
+                        c.periodo(), DATA, "Estorno do ajuste");
+                return lancamentos.confirmarEstorno(c.empresa(), c.usuario(), estorno.getId());
+            });
+            assertThat(conciliarEstoque(schema, c, c.exercicio(), DATA).diferenca()).isZero();
+            executar(schema, () -> fechamento.encerrarPeriodo(c.empresa(), c.usuario(), c.exercicio(), c.periodo()));
+        });
+    }
+
+    @Test
+    void protegeSaldoInicialMesmoComAjusteManualEProdutoDiferente() {
+        comCenario((schema, c) -> {
+            UUID abertura = abrirEstoque(schema, c, "10.00");
+            UUID outroProduto = executar(schema, () ->
+                    estoque.cadastrarProduto(c.empresa(), c.usuario(), "SKU-02", "Outra mercadoria", "UN")).id();
+            var compra = operacao(c, DATA.plusDays(1), "2", "8", CAIXA);
+            var venda = operacao(c, DATA.plusDays(1), "1", "12", CAIXA);
+            var compraOutroProduto = new OperacaoEstoque(c.empresa(), c.usuario(), c.exercicio(), c.periodo(),
+                    outroProduto, compra.data(), compra.quantidade(), compra.valorUnitario(), compra.historico(),
+                    compra.contrapartidaId());
+            assertThatThrownBy(() -> executar(schema, () -> estoque.registrarCompra(compra)))
+                    .hasMessageContaining("Mercadorias pendente de importação: 10.00");
+            assertThatThrownBy(() -> executar(schema, () -> estoque.registrarVenda(venda)))
+                    .hasMessageContaining("Importe os lotes da abertura");
+            assertThatThrownBy(() -> executar(schema, () -> estoque.registrarCompra(compraOutroProduto)))
+                    .hasMessageContaining("Mercadorias pendente de importação");
+            conferirSemEscrituracaoOperacional(schema, 1L);
+
+            executar(schema, () -> {
+                var manual = lancamentos.criarRascunho(c.empresa(), c.usuario(), c.exercicio(), c.periodo(),
+                        DATA, "Ajuste manual");
+                lancamentos.adicionarPartida(c.empresa(), c.usuario(), manual.getId(), c.contas().get(CAIXA),
+                        TipoPartida.DEBITO, new BigDecimal("10.00"), null);
+                lancamentos.adicionarPartida(c.empresa(), c.usuario(), manual.getId(), c.contas().get(ESTOQUE),
+                        TipoPartida.CREDITO, new BigDecimal("10.00"), null);
+                return lancamentos.confirmarLancamento(c.empresa(), c.usuario(), manual.getId());
+            });
+            assertThat(conciliarEstoque(schema, c, c.exercicio(), DATA).diferenca()).isZero();
+            assertThatThrownBy(() -> executar(schema, () -> estoque.registrarCompra(compra)))
+                    .hasMessageContaining("Mercadorias pendente de importação: 10.00");
+            conferirSemEscrituracaoOperacional(schema, 2L);
+
+            Cenario outra = executar(schema, this::criarCenario);
+            assertThat(executar(schema, () -> estoque.registrarCompra(operacao(outra, DATA, "1", "3", CAIXA)))
+                    .numeroContabil()).isEqualTo(1L);
+            assertThat(executar(schema, () -> estoque.registrarVenda(operacao(outra, DATA, "1", "5", CAIXA)))
+                    .custoEstoque()).isEqualByComparingTo("3.00");
+
+            var lote = executar(schema, () -> estoque.importarSaldoInicial(pedidoDeImportacao(c, abertura))).getFirst();
+            assertThat(executar(schema, () -> estoque.registrarCompra(compra)).numeroContabil()).isEqualTo(3L);
+            var vendaConfirmada = executar(schema, () -> estoque.registrarVenda(venda));
+            assertThat(vendaConfirmada.numeroContabil()).isEqualTo(4L);
+            assertThat(vendaConfirmada.custoEstoque()).isEqualByComparingTo("5.00");
+            assertThat(executar(schema, () -> estoque.consultarAlocacoes(c.empresa(), c.usuario(), c.produto(),
+                    vendaConfirmada.movimentoId()))).extracting(Alocacao::entradaId).containsExactly(lote.id());
+
+        });
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void compraOuVendaAguardaImportacaoNoProdutoERevalidaSaldo(boolean venda) {
+        comCenario((schema, c) -> {
+            UUID abertura = abrirEstoque(schema, c, "10.00");
+            var pedido = pedidoDeImportacao(c, abertura);
+            var operacao = operacao(c, DATA, "1", "8", CAIXA);
+            var concorrente = disputarComCommit(schema, () -> estoque.importarSaldoInicial(pedido),
+                    () -> venda ? estoque.registrarVenda(operacao) : estoque.registrarCompra(operacao), "produto_estoque");
+            var confirmada = concorrente.join();
+            assertThat(confirmada.numeroContabil()).isEqualTo(2L);
+            assertThat(confirmada.custoEstoque()).isEqualByComparingTo(venda ? "5.00" : "8.00");
+        });
+    }
+
+    @Test
+    void compraRevalidaSaldoDeAberturaConfirmadaEnquantoAguardaSequencia() {
+        comCenario((schema, c) -> {
+            var compra = operacao(c, DATA, "1", "8", CAIXA);
+            var concorrente = disputarComCommit(schema, () -> lancamentos.registrarSaldosIniciais(aberturaEstoque(c, "10.00")),
+                    () -> estoque.registrarCompra(compra), "sequencia_lancamento");
+            assertThatThrownBy(concorrente::join)
+                    .hasRootCauseMessage("Saldo inicial de Mercadorias pendente de importação: 10.00. "
+                            + "Importe os lotes da abertura antes de comprar ou vender.");
+            conferirSemEscrituracaoOperacional(schema, 1L);
+        });
+    }
+
+    @Test
+    void aberturaNaoUltrapassaCompraQueObteveAPrimeiraNumeracao() {
+        comCenario((schema, c) -> {
+            var compra = operacao(c, DATA, "1", "8", CAIXA);
+            var concorrente = disputarComCommit(schema, () -> estoque.registrarCompra(compra),
+                    () -> lancamentos.registrarSaldosIniciais(aberturaEstoque(c, "10.00")), "sequencia_lancamento");
+            assertThatThrownBy(concorrente::join).hasRootCauseMessage(
+                    "A abertura deve ser o primeiro lançamento escriturado no exercício.");
+            executar(schema, () -> {
+                assertThat(jdbc.queryForObject("select ultimo_numero from sequencia_lancamento", Long.class)).isEqualTo(1L);
+                assertThat(jdbc.queryForObject("select count(*) from lancamento_contabil", Long.class)).isEqualTo(1L);
+                assertThat(ficha(c).movimentos()).hasSize(1);
+                return null;
+            });
+        });
+    }
+
+    private SaldoInicialEstoque pedidoDeImportacao(Cenario c, UUID abertura) {
+        return new SaldoInicialEstoque(c.empresa(), c.usuario(), abertura,
+                List.of(new SaldoInicialEstoque.Lote(c.produto(), new BigDecimal("2"), new BigDecimal("5"))));
+    }
+
+    private void conferirSemEscrituracaoOperacional(String schema, long numero) {
+        executar(schema, () -> {
+            assertThat(jdbc.queryForObject("select ultimo_numero from sequencia_lancamento", Long.class)).isEqualTo(numero);
+            assertThat(jdbc.queryForObject("select count(*) from lancamento_contabil", Long.class)).isEqualTo(numero);
+            assertThat(jdbc.queryForObject("select count(*) from partida_contabil", Long.class)).isEqualTo(2L * numero);
+            assertThat(jdbc.queryForObject("select count(*) from movimento_estoque", Long.class)).isZero();
+            assertThat(jdbc.queryForObject("select count(*) from lote_estoque", Long.class)).isZero();
+            assertThat(jdbc.queryForObject("select count(*) from alocacao_estoque", Long.class)).isZero();
+            assertThat(jdbc.queryForObject("select count(*) from auditoria_evento where entidade = 'movimento_estoque'",
+                    Long.class)).isZero();
+            return null;
+        });
+    }
+
+    private UUID abrirEstoque(String schema, Cenario c, String valor) {
+        return executar(schema, () -> lancamentos.registrarSaldosIniciais(aberturaEstoque(c, valor))).lancamentoId();
+    }
+
+    private AberturaContabil aberturaEstoque(Cenario c, String valor) {
+        return new AberturaContabil(
+                c.empresa(), c.usuario(), c.exercicio(), c.periodo(), DATA, "Migração",
+                List.of(partida(c, ESTOQUE, TipoPartida.DEBITO, new BigDecimal(valor)),
+                        partida(c, "3.1.001", TipoPartida.CREDITO, new BigDecimal(valor))));
+    }
+
+    private Item conciliarEstoque(String schema, Cenario c, UUID exercicio, LocalDate data) {
+        return executarConsulta(schema, () -> conciliacao.conciliar(c.empresa(), c.usuario(), exercicio, data)
+                .itens().stream().filter(item -> item.conta().id().equals(c.contas().get(ESTOQUE)))
+                .findFirst().orElseThrow());
+    }
+
+    private <T> T executarConsulta(String schema, Supplier<T> operacao) {
+        var tx = new TransactionTemplate(transacoes);
+        tx.setReadOnly(true);
+        tx.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+        return tx.execute(status -> {
+            jdbc.execute("set local search_path to " + schema);
+            return operacao.get();
         });
     }
 
@@ -646,17 +923,54 @@ class EstoqueServiceTest {
     }
 
     private void aguardarBloqueio(int bloqueadora, int bloqueada) throws InterruptedException {
+        aguardarBloqueio(bloqueadora, bloqueada, "produto_estoque");
+    }
+
+    private void aguardarBloqueio(int bloqueadora, int bloqueada, String tabela) throws InterruptedException {
         long limite = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         while (System.nanoTime() < limite) {
             if (Boolean.TRUE.equals(jdbc.queryForObject("""
-                    select ? = any(pg_blocking_pids(pid)) and query ilike '%produto_estoque%'
+                    select ? = any(pg_blocking_pids(pid)) and query ilike ?
                     from pg_stat_activity where pid = ?
-                    """, Boolean.class, bloqueadora, bloqueada))) {
+                    """, Boolean.class, bloqueadora, "%" + tabela + "%", bloqueada))) {
                 return;
             }
             TimeUnit.MILLISECONDS.sleep(25);
         }
-        throw new AssertionError("A segunda saída não aguardou no bloqueio do produto.");
+        throw new AssertionError("A operação concorrente não aguardou bloqueio em " + tabela + ".");
+    }
+
+    private <T> CompletableFuture<T> disputarComCommit(String schema, Runnable primeira, Supplier<T> segunda, String tabela) {
+        var pidPrimeira = new CompletableFuture<Integer>();
+        var pidSegunda = new CompletableFuture<Integer>();
+        var liberarCommit = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            try {
+                var titular = executor.submit(() -> executar(schema, () -> {
+                    primeira.run();
+                    pidPrimeira.complete(pid());
+                    aguardar(liberarCommit);
+                    return null;
+                }));
+                int bloqueadora = pidPrimeira.get(10, TimeUnit.SECONDS);
+                var concorrente = CompletableFuture.supplyAsync(() -> executar(schema, () -> {
+                    pidSegunda.complete(pid());
+                    return segunda.get();
+                }), executor);
+                aguardarBloqueio(bloqueadora, pidSegunda.get(5, TimeUnit.SECONDS), tabela);
+                liberarCommit.countDown();
+                titular.get(10, TimeUnit.SECONDS);
+                concorrente.handle((resultado, falha) -> null).get(10, TimeUnit.SECONDS);
+                return concorrente;
+            } finally {
+                liberarCommit.countDown();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(e);
+        } catch (ExecutionException | TimeoutException e) {
+            throw new AssertionError(e);
+        }
     }
 
     private void aguardar(CountDownLatch liberar) {

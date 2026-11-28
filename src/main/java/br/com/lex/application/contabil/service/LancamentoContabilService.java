@@ -2,6 +2,7 @@ package br.com.lex.application.contabil.service;
 
 import br.com.lex.application.contabil.dto.AberturaConfirmada;
 import br.com.lex.application.contabil.dto.AberturaContabil;
+import br.com.lex.domain.contabil.ApuracaoSaldos;
 import br.com.lex.domain.contabil.entity.ContaContabil;
 import br.com.lex.domain.contabil.entity.Empresa;
 import br.com.lex.domain.contabil.entity.ExercicioContabil;
@@ -19,6 +20,8 @@ import br.com.lex.domain.contabil.repository.ContaContabilRepository;
 import br.com.lex.domain.contabil.repository.EmpresaRepository;
 import br.com.lex.domain.contabil.repository.ExercicioContabilRepository;
 import br.com.lex.domain.contabil.repository.LancamentoContabilRepository;
+import br.com.lex.domain.contabil.repository.AtivoPatrimonialRepository;
+import br.com.lex.domain.contabil.repository.MovimentoEstoqueRepository;
 import br.com.lex.domain.contabil.repository.PartidaContabilRepository;
 import br.com.lex.domain.contabil.repository.PartidaContabilRepository.DadosPartida;
 import br.com.lex.domain.contabil.repository.PeriodoContabilRepository;
@@ -34,6 +37,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.HashSet;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -57,6 +61,8 @@ public class LancamentoContabilService {
     private final ContaContabilRepository contaRepository;
     private final PartidaContabilRepository partidaRepository;
     private final SequenciaLancamentoRepository sequenciaRepository;
+    private final MovimentoEstoqueRepository movimentosEstoque;
+    private final AtivoPatrimonialRepository ativosPatrimoniais;
     private final EntityManager entityManager;
 
     public LancamentoContabilService(
@@ -69,6 +75,8 @@ public class LancamentoContabilService {
             ContaContabilRepository contaRepository,
             PartidaContabilRepository partidaRepository,
             SequenciaLancamentoRepository sequenciaRepository,
+            MovimentoEstoqueRepository movimentosEstoque,
+            AtivoPatrimonialRepository ativosPatrimoniais,
             EntityManager entityManager
     ) {
         this.usuarioRepository = usuarioRepository;
@@ -80,6 +88,8 @@ public class LancamentoContabilService {
         this.contaRepository = contaRepository;
         this.partidaRepository = partidaRepository;
         this.sequenciaRepository = sequenciaRepository;
+        this.movimentosEstoque = movimentosEstoque;
+        this.ativosPatrimoniais = ativosPatrimoniais;
         this.entityManager = entityManager;
     }
 
@@ -308,6 +318,12 @@ public class LancamentoContabilService {
                 if (exercicio.getExercicioOrigemId() != null) {
                     throw new IllegalStateException("A abertura automatizada não pode ser estornada pelo fluxo genérico.");
                 }
+                if (movimentosEstoque.existeVinculado(original.getEmpresaId(), original.getId())) {
+                    throw new IllegalStateException("A abertura vinculada a lotes iniciais exige reversão pelo módulo de estoque.");
+                }
+                if (ativosPatrimoniais.existsByEmpresaIdAndLancamentoAberturaId(original.getEmpresaId(), original.getId())) {
+                    throw new IllegalStateException("A abertura vinculada a fichas importadas exige reversão pelo módulo patrimonial.");
+                }
             }
             case ESTORNO -> throw new IllegalStateException("Um lançamento de estorno não pode ser estornado.");
             case ENCERRAMENTO -> throw new IllegalStateException("Um lançamento de encerramento não pode ser estornado.");
@@ -367,6 +383,37 @@ public class LancamentoContabilService {
         buscarEmpresaAutorizada(empresaId, usuarioId);
     }
 
+    LancamentoContabil bloquearAberturaParaImportacao(UUID empresaId, UUID usuarioId, UUID aberturaId,
+                                                      LockModeType bloqueioExercicio) {
+        Usuario usuario = buscarUsuarioAtivo(usuarioId);
+        Empresa empresa = buscarEmpresaAutorizada(empresaId, usuarioId);
+        LancamentoContabil abertura = bloquearLancamentoAtualizado(empresaId, aberturaId);
+        if (abertura.getOrigem() != OrigemLancamento.ABERTURA || abertura.getStatus() != StatusLancamento.CONFIRMADO) {
+            throw new IllegalStateException("Informe uma abertura de migração confirmada.");
+        }
+        ExercicioContabil exercicio = buscarExercicio(empresaId, abertura.getExercicioId());
+        PeriodoContabil periodo = buscarPeriodo(empresaId, exercicio.getId(), abertura.getPeriodoId());
+        bloquearEValidarDestino(exercicio, periodo, empresa, usuario, abertura.getData(), bloqueioExercicio);
+        if (exercicio.getExercicioOrigemId() != null
+                || exercicioRepository.existsByEmpresaIdAndAnoLessThan(empresaId, exercicio.getAno())) {
+            throw new IllegalStateException("A importação exige a abertura do primeiro exercício da empresa.");
+        }
+        if (lancamentoRepository.findByEstornoDeIdAndEmpresaId(aberturaId, empresaId).isPresent()) {
+            throw new IllegalStateException("Cancele o rascunho de estorno da abertura antes da importação.");
+        }
+        return abertura;
+    }
+
+    Map<UUID, BigDecimal> saldosDaAbertura(LancamentoContabil abertura) {
+        Map<UUID, ApuracaoSaldos> apuracoes = new HashMap<>();
+        for (DadosPartida partida : buscarPartidas(abertura)) {
+            apuracoes.computeIfAbsent(partida.getContaContabilId(), id -> new ApuracaoSaldos(abertura.getData()))
+                    .registrar(abertura.getData(), partida.getTipo(), partida.getValor());
+        }
+        return apuracoes.entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey,
+                item -> item.getValue().saldoAtual().valor()));
+    }
+
     void validarDestinoOperacional(UUID empresaId, UUID usuarioId, UUID exercicioId, UUID periodoId, LocalDate data) {
         Usuario usuario = buscarUsuarioAtivo(usuarioId);
         Empresa empresa = buscarEmpresaAutorizada(empresaId, usuarioId);
@@ -380,9 +427,14 @@ public class LancamentoContabilService {
     private void bloquearEValidarDestino(
             ExercicioContabil exercicio, PeriodoContabil periodo, Empresa empresa, Usuario usuario, LocalDate data
     ) {
+        bloquearEValidarDestino(exercicio, periodo, empresa, usuario, data, LockModeType.PESSIMISTIC_READ);
+    }
+
+    private void bloquearEValidarDestino(ExercicioContabil exercicio, PeriodoContabil periodo, Empresa empresa,
+                                          Usuario usuario, LocalDate data, LockModeType bloqueioExercicio) {
         // Após os lançamentos: período, exercício, empresa, usuário, contas por ID e sequência.
         entityManager.refresh(periodo, LockModeType.PESSIMISTIC_READ);
-        entityManager.refresh(exercicio, LockModeType.PESSIMISTIC_READ);
+        entityManager.refresh(exercicio, bloqueioExercicio);
         bloquearEValidarAutorizacao(empresa, usuario);
         validarCalendario(exercicio, periodo, data);
     }
@@ -407,6 +459,24 @@ public class LancamentoContabilService {
         validarLimiteDaAbertura(lancamento);
         lancamento.confirmar(numero, usuario, OffsetDateTime.now());
         lancamentoRepository.flush();
+    }
+
+    void validarIntegralizacaoEstoque(UUID empresaId, LocalDate data) {
+        UUID mercadorias = contaRepository.buscarContaDoModeloPadrao(empresaId, EstoqueService.MERCADORIAS)
+                .orElseThrow(() -> new IllegalStateException("Conta do modelo padrão ausente no plano: " + EstoqueService.MERCADORIAS));
+        var apuracao = new ApuracaoSaldos(data);
+        for (var partida : partidaRepository.somarMigracaoDaContaAte(empresaId, mercadorias, data)) {
+            apuracao.registrar(data, partida.getTipo(), partida.getValor());
+        }
+        BigDecimal abertura = apuracao.saldoAtual().valor();
+        if (abertura.signum() > 0) {
+            BigDecimal importado = movimentosEstoque.somarValorImportadoAte(empresaId, data);
+            BigDecimal pendente = ConciliacaoOperacionalService.saldoPendenteDeImportacao(abertura, importado);
+            if (pendente.signum() > 0) {
+                throw new IllegalStateException("Saldo inicial de Mercadorias pendente de importação: "
+                        + pendente.toPlainString() + ". Importe os lotes da abertura antes de comprar ou vender.");
+            }
+        }
     }
 
     private void validarLimiteDaAbertura(LancamentoContabil lancamento) {

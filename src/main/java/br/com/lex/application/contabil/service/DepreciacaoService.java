@@ -114,12 +114,13 @@ public class DepreciacaoService {
         }
         BigDecimal acumulado = historico.stream().map(ApropriacaoDepreciacao::valor)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal base = ativo.baseDepreciavel();
-        if (acumulado.compareTo(base) >= 0 || historico.size() >= ativo.getVidaUtilMeses()) {
+        BigDecimal base = ativo.baseInicialLex();
+        int vidaUtil = ativo.vidaUtilInicialLex();
+        if (acumulado.compareTo(base) >= 0 || historico.size() >= vidaUtil) {
             return new PlanoApropriacao(ativo, Situacao.INELEGIVEL, null, null, null,
                     "O ativo não possui base depreciável ou vida útil remanescente.");
         }
-        var proxima = YearMonth.from(ativo.getDataDisponibilidade()).plusMonths(historico.size());
+        var proxima = ativo.primeiraCompetenciaLex().plusMonths(historico.size());
         if (!competencia.equals(proxima)) {
             var situacao = proxima.isBefore(competencia) ? Situacao.ANTERIOR_PENDENTE : Situacao.INELEGIVEL;
             return new PlanoApropriacao(ativo, situacao, null, null, proxima,
@@ -127,7 +128,7 @@ public class DepreciacaoService {
         }
 
         BigDecimal devidoAteMes = base.multiply(BigDecimal.valueOf(historico.size() + 1L))
-                .divide(BigDecimal.valueOf(ativo.getVidaUtilMeses()), 2, RoundingMode.HALF_UP);
+                .divide(BigDecimal.valueOf(vidaUtil), 2, RoundingMode.HALF_UP);
         BigDecimal valor = devidoAteMes.subtract(acumulado);
         if (valor.signum() < 0) {
             throw new IllegalStateException("O histórico excede a depreciação acumulada prevista para a competência.");

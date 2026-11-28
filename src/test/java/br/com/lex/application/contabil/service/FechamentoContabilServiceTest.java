@@ -3,6 +3,7 @@ package br.com.lex.application.contabil.service;
 import br.com.lex.application.contabil.dto.AberturaContabil;
 import br.com.lex.application.contabil.dto.AberturaContabil.SaldoPorConta;
 import br.com.lex.application.contabil.dto.Dre;
+import br.com.lex.application.contabil.dto.SaldoInicialPatrimonial;
 import br.com.lex.domain.contabil.entity.ContaContabil;
 import br.com.lex.domain.contabil.entity.Empresa;
 import br.com.lex.domain.contabil.entity.ExercicioContabil;
@@ -68,6 +69,7 @@ class FechamentoContabilServiceTest {
     private static final String DESPESA = "6.2.002";
 
     @Autowired private FechamentoContabilService fechamento;
+    @Autowired private AtivoPatrimonialService ativos;
     @Autowired private LancamentoContabilService lancamentos;
     @Autowired private PlanoContasService planos;
     @Autowired private ContaContabilRepository contas;
@@ -123,13 +125,18 @@ class FechamentoContabilServiceTest {
     @Transactional
     void encerraLucroETransportaPatrimonioComRedutoraESaldoInvertido() {
         Cenario c = criarCenario();
-        lancamentos.registrarSaldosIniciais(new AberturaContabil(c.empresa(), c.usuario(), c.calendario().exercicio(),
+        var abertura = lancamentos.registrarSaldosIniciais(new AberturaContabil(c.empresa(), c.usuario(), c.calendario().exercicio(),
                 c.calendario().janeiro(), JANEIRO, "Abertura", List.of(
                         partida(c, CAIXA, TipoPartida.DEBITO, "100"),
                         partida(c, EDIFICACOES, TipoPartida.DEBITO, "300"),
                         partida(c, FORNECEDORES, TipoPartida.DEBITO, "20"),
                         partida(c, DEPRECIACAO, TipoPartida.CREDITO, "50"),
                         partida(c, CAPITAL, TipoPartida.CREDITO, "370"))));
+        LocalDate historico = JANEIRO.minusYears(1);
+        ativos.importarSaldoInicial(new SaldoInicialPatrimonial(c.empresa(), c.usuario(), abertura.lancamentoId(), List.of(
+                new SaldoInicialPatrimonial.Bem("EDIFICACAO", "Edificação existente", c.contas().get(EDIFICACOES),
+                        c.contas().get("6.2.006"), historico, historico, new BigDecimal("300"), true,
+                        new BigDecimal("250"), 12, new BigDecimal("50"), 12, false))));
         confirmar(c, rascunho(c, c.calendario(), JANEIRO, CAIXA, RECEITA, "120.00"));
         confirmar(c, rascunho(c, c.calendario(), JANEIRO, DESPESA, CAIXA, "30.00"));
         fecharJaneiro(c);
@@ -474,12 +481,20 @@ class FechamentoContabilServiceTest {
     void upgradeV12DiagnosticaAnosAusentesSemPreencherLegadoOuEncerrarExercicio() {
         comSchema(schema -> {
             migrar(schema, "11");
-            Cenario c = executar(schema, this::criarCenario);
-            executar(schema, () -> {
-                prepararAnoParaContinuidade(c);
-                return cadastrarAno(c.empresa(), 2028);
+            UUID empresaId = executar(schema, this::criarEmpresaSemCalendario);
+            Calendario calendario = executar(schema, () -> {
+                Calendario origem = criarCalendario(em.getReference(Empresa.class, empresaId), (short) 2026);
+                cadastrarAno(empresaId, 2028);
+                assertThat(anos(empresaId)).containsExactly(2026, 2028);
+                return origem;
             });
+
             migrar(schema, null);
+            Cenario c = executar(schema, () -> {
+                Cenario atual = montarCenario(em.getReference(Empresa.class, empresaId), calendario);
+                prepararAnoParaContinuidade(atual);
+                return atual;
+            });
             assertThatThrownBy(() -> executar(schema, () -> cadastrarAno(c.empresa(), 2029)))
                     .satisfies(erro -> conferirConstraint(erro, "23514", "ck_exercicio_lacuna_legada"))
                     .hasMessageContaining("2027 a 2027 (entre 2026 e 2028)");
@@ -735,10 +750,15 @@ class FechamentoContabilServiceTest {
         Empresa empresa = new Empresa(usuario, "Empresa", "Empresa", null);
         em.persist(empresa);
         Calendario calendario = criarCalendario(empresa, (short) 2026);
-        UUID plano = planos.provisionar(empresa.getId(), usuario.getId()).getId();
+        return montarCenario(empresa, calendario);
+    }
+
+    private Cenario montarCenario(Empresa empresa, Calendario calendario) {
+        UUID usuarioId = empresa.getUsuario().getId();
+        UUID plano = planos.provisionar(empresa.getId(), usuarioId).getId();
         Map<String, UUID> planoPorCodigo = contas.findAllByPlanoContasIdOrderByCodigoAsc(plano).stream()
                 .collect(toMap(ContaContabil::getCodigo, ContaContabil::getId));
-        return new Cenario(empresa.getId(), usuario.getId(), calendario, planoPorCodigo);
+        return new Cenario(empresa.getId(), usuarioId, calendario, planoPorCodigo);
     }
 
     private Calendario criarCalendario(Empresa empresa, short ano) {

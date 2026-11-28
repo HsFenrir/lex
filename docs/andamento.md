@@ -1,12 +1,13 @@
 # LEX — Andamento e passagem de contexto
 
-Atualização em 27/11/2026, após a conclusão técnica do incremento 8B de depreciação linear e integridade do calendário. Apresentação em 30/11/2026.
+Atualização em 28/11/2026, após a conclusão técnica do incremento 9A de conciliação e integralização dos saldos iniciais. Apresentação em 30/11/2026.
 
 ## 1. Base verificada
 
+- O 8B foi publicado em `c01c9cc`. O `HEAD` e a referência local `origin/main` apontavam para esse checkpoint na revisão do 9A. O 9A está apto para commit na árvore de trabalho. A publicação depende do commit e do push.
 - O 6E foi concluído e publicado em `d2ca25a`, com a estratégia de contingência frontend e os atributos para arquivos binários. O 7A foi concluído e publicado em `23ed409`, com a estrutura de estoque PEPS e a V8. Na revisão do 7B, `HEAD` e a referência local `origin/main` apontavam para `23ed409`. O 7B foi concluído e validado na árvore de trabalho.
 - O 7B foi publicado em `a98a22e`, checkpoint de `HEAD` e da referência local `origin/main` na revisão do 8A. O 8A foi concluído e validado na árvore de trabalho, com aquisição patrimonial integrada e schema V9.
-- O 8A foi publicado em `b7684c4` (`feat: implement asset management and acquisition accounting`), checkpoint da revisão do 8B. O incremento 8B está tecnicamente concluído e apto para commit na árvore de trabalho. A publicação depende do commit e do push.
+- O 8A foi publicado em `b7684c4` (`feat: implement asset management and acquisition accounting`), checkpoint da revisão do 8B.
 - Incremento 4C publicado em `677d725`. Incremento 5A publicado em `d82f341` (`feat: implement trial balance and hierarchical account aggregation`), com seis arquivos, 512 inserções e nove exclusões. Incremento 5B publicado em `37d2da4`. Incremento 4D publicado em `bba714b`. Os incrementos 6A a 6C foram publicados em `597f34e`. O 6D entregou o planejamento da integração web.
 - As metas de 25/11 foram integralmente concluídas. Os serviços de Livro Diário e Livro Razão foram antecipados em relação às atividades previstas para 26/11.
 - AGENTS.md e documentação inicial publicados em 9d41a94. Incremento 1 publicado em 54a4b39, script de testes em 9fbd7d1, escopo acadêmico confirmado em 1bf3fbc e incremento 2 publicado em 47cf2a8.
@@ -60,6 +61,10 @@ Após a correção da continuidade anual, `.\scripts\test.ps1` terminou em 27/11
 | LexApplicationTests | 1 |
 | Total | 179 |
 
+No 9A, a execução do desenvolvedor com `.\scripts\test.ps1` terminou em 28/11/2026 às 00:34:42 (UTC−03:00), em 03:41 min, com **BUILD SUCCESS**. Os 17 relatórios Surefire confirmam **196 testes aprovados, zero falhas, erros ou ignorados**, com 179 casos anteriores e 17 novos. Estoque teve 24/24, patrimônio 34/34, fechamento 17/17 e estorno 19/19. As 69 fontes principais e 18 de teste correspondem às classes compiladas de 00:31:13 a 00:31:33. A última fonte é de 00:29:46, e os relatórios foram gravados de 00:32:21 a 00:34:41.
+
+A suíte usou PostgreSQL 18.4, banco `lex_test` e schema V14. O Flyway registrou instalações desde V1 e upgrades até V14, incluindo o cenário com a lacuna de 2027 criada na V11 e verificada após o upgrade. V1–V12 coincidem com `c01c9cc`. V13 e V14 mantêm os hashes das validações anteriores e coincidem com as cópias compiladas. A contagem de 15 em schemas descartáveis inclui o marcador de criação do schema. O `public` valida 14 migrations e a versão final é V14.
+
 Os cenários negativos incluem violações esperadas das chaves estrangeiras `fk_conta_pai` e `fk_conta_reduzida` e das regras de unicidade `uq_lancamento_estorno_unico` e `uq_lancamento_numero_empresa_exercicio`. Os testes respectivos passaram. A colisão de número foi provocada após a alocação para verificar que o lançamento permanece em rascunho e a atualização do contador é revertida.
 
 O teste de rollback do estorno provocou uma falha na transição do original após o `flush` da confirmação do estorno, por meio da constraint `teste_bloquear_estornado` em schema descartável. A verificação em outra transação confirmou que o original permaneceu `CONFIRMADO`, o estorno voltou a `RASCUNHO` sem número, a reserva foi mantida e a sequência foi revertida.
@@ -81,9 +86,9 @@ Na validação do incremento 1, em 25/11 às 01:46:32 (UTC−03:00), `.\mvnw.cmd
 | Saldos iniciais | Abertura manual no primeiro exercício da empresa. O 4D valida o limite temporal da migração em cada confirmação. |
 | Balancete de Verificação | Incremento 5A publicado. Apuração por conta e agregação pela hierarquia do plano. |
 | Balanço Patrimonial e DRE | Incremento 5B validado. Emissão por data-base e intervalo, respectivamente. |
-| Fechamento e continuidade | Incrementos 6A, 6B e 6C validados na camada contábil. Integração com os módulos operacionais pendente. |
-| Estoque PEPS | 7A e 7B validados. Cadastro, consultas, lotes, alocações PEPS e contabilização de compras e vendas disponíveis. |
-| Controle patrimonial | 8A publicado. O 8B validou disponibilidade posterior, apropriação individual e coletiva, histórico patrimonial e verificação no fechamento. Publicação pendente de commit e push. |
+| Fechamento e continuidade | Fechamentos mensal e anual verificam depreciação, conciliação operacional e integralização da abertura. A continuidade transporta os saldos e mantém os vínculos operacionais originais. |
+| Estoque PEPS | Cadastro, consultas, lotes, alocações PEPS, contabilização de compras e vendas e importação de inventário inicial. Compras e vendas aguardam a integralização da abertura. |
+| Controle patrimonial | Aquisição, disponibilidade, depreciação individual e coletiva, histórico e importação de fichas com acumulado anterior à abertura. |
 | API/frontend | Spring MVC e Thymeleaf como dependências. Controllers, autenticação e telas pendentes. O 6D planejou 36 rotas HTTP, com 16 serviços disponíveis e 20 operações dependentes de implementação adicional. |
 
 ### Arquivos e contratos do incremento 1
@@ -260,6 +265,19 @@ Os testes do 7A usam partidas de fixture para satisfazer o vínculo obrigatório
 - Cadastro e fechamento anual compartilham o bloqueio transacional por empresa em `READ COMMITTED`. O maior ano é lido depois de adquirir o bloqueio. O fechamento o adquire antes de consultar o sucessor e bloquear os períodos e exercícios de origem e destino. A criação de períodos usa o bloqueio do exercício. Operações patrimoniais bloqueiam o calendário e consultam exercícios futuros em ordem cronológica antes de bloquear ativo, contas e sequência. A exclusão já detém o bloqueio da linha e, pela V12, falha com `55P03` se o bloqueio da empresa estiver ocupado. Essa proteção foi conferida no código. Os testes demonstraram as duas ordens entre cadastro e fechamento, com criação ou reutilização de sucessor único e transporte sem duplicação, e as duas ordens entre pedidos de anos consecutivos e não consecutivos.
 - O PostgreSQL protege a sequência anual, o calendário estrutural e o vínculo das apropriações positivas. Os serviços verificam meses anteriores abertos, depreciação pendente e continuidade patrimonial da V7. Escritas SQL diretas com permissões suficientes ainda podem reabrir status ou alterar vínculos de continuidade. Transações externas que agrupem operações devem conservar a ordem dos bloqueios, adquirindo o bloqueio anual antes de bloquear linhas do calendário quando forem encerrar um exercício. A regularização administrativa de calendários legados segue pendente.
 
+### Contratos e garantias do incremento 9A
+
+- `ConciliacaoOperacionalService.conciliar(empresaId, usuarioId, exercicioId, dataBase)` retorna `ConciliacaoOperacional` com conta, saldos contábil e auxiliar, diferença, saldo de abertura pendente, saldo manual líquido e diagnóstico. Reutiliza o Balancete em um snapshot consistente e reconstrói o PEPS com entradas e alocações até o fim da data-base. Inclui custos, saldos históricos e apropriações efetivas do LEX. As redutoras usam sinal credor. Saldos importados integram a posição histórica pela data contábil da abertura, ainda que cadastrados depois.
+- `EstoqueService.importarSaldoInicial(SaldoInicialEstoque)` vincula o inventário integral ao débito de Mercadorias da abertura de migração do primeiro exercício. A competência deve estar aberta e os produtos ainda devem estar sem movimentação. A ordem informada para os lotes do mesmo produto é preservada no PEPS.
+- `AtivoPatrimonialService.importarSaldoInicial(SaldoInicialPatrimonial)` completa, por lote atômico, as contas patrimoniais selecionadas e suas redutoras. Contas distintas podem ser importadas em etapas. A ficha distingue aquisição de importação e separa o acumulado importado das apropriações efetivas. As duas importações reutilizam a abertura confirmada, preservam a numeração, registram auditoria individual e rejeitam duplicidades e valores incompatíveis.
+- A depreciação individual e coletiva usa a base e a vida útil remanescentes, respeitando o residual e o arredondamento acumulado. Quando o mês da abertura já foi apropriado na origem, o marco do LEX é deslocado para o mês seguinte. A disponibilidade pode postergar o início. Competências obrigatórias de valor zero são registradas sem número contábil.
+- Fechamentos mensal e anual bloqueiam diferenças operacionais, diferenças líquidas de lançamentos manuais e saldos de abertura pendentes de importação. A pendência compara a abertura com o valor já importado, de modo que um ajuste manual não a elimina. Empresas sem saldos sujeitos a controle seguem as demais regras do fechamento.
+- Compras e vendas em `READ COMMITTED` verificam a pendência pela empresa e conta de Mercadorias, independentemente do produto. A primeira leitura ocorre com o produto bloqueado, antes de gravar ou consumir lotes. A segunda ocorre após obter a sequência e escriturar na mesma transação, antes do vínculo e da auditoria. Ela enxerga uma abertura confirmada durante a espera pela sequência. A confirmação contábil genérica permanece independente da conta de Mercadorias.
+- A importação bloqueia abertura, período, exercício, empresa e usuário antes dos produtos por ID ou das contas. A movimentação bloqueia período, exercício, empresa e usuário, produto, contas e sequência, com lançamento novo privativo da transação. A importação patrimonial usa bloqueio exclusivo do exercício para serializar com depreciação e fechamento. A revalidação de estoque faz leituras e a rejeição reverte movimentos, lotes, alocações, escrituração e sequência em conjunto. A auditoria de sucesso é gravada após validar e vincular a operação.
+- Os cinco casos da proteção de estoque cobrem o bloqueio para outro produto e após ajuste manual, a liberação com PEPS após importar, empresa sem saldo inicial, compra e venda esperando a importação e as duas ordens da disputa entre abertura e primeira compra. No caso em que a abertura confirma primeiro, o teste confere o rollback de lançamento, partidas, movimentos, lotes, alocações e sequência, além da ausência de auditoria operacional de sucesso. O teste de estorno genérico preserva a fixture de plano mínimo e suas asserções.
+- A V13 vincula os lotes à abertura e protege esse vínculo contra estorno genérico. A V14 persiste o vínculo e os valores históricos das fichas, preserva a exclusividade da aquisição regular e impede apropriação antes do marco de importação. A proteção de integralização inicial ficou nos serviços e o schema permanece na V14.
+- A regularização de competências já encerradas e de estoques legados movimentados antes da importação exige tratamento próprio. As reversões operacionais e a baixa patrimonial permanecem fora do 9A.
+
 ## 4. Ambiente de execução
 
 | Perfil | JDBC | Role | Variáveis |
@@ -284,9 +302,9 @@ O script verifica variáveis e arquivos locais que podem sobrescrever a execuç�
 
 O modo padrão do script foi validado nas suítes de 68, 87, 92, 97, 105, 110, 116, 121, 133, 141, 148, 154 e 166 testes. Para JUnit no IntelliJ, use `TEST_DB_*` nas configurações locais All in lex e LexApplicationTests. A atualização dessas configurações ainda não foi confirmada. Uma IDE já aberta não herda variáveis de um novo terminal.
 
-## 5. Próxima etapa e contingência frontend — 27/11/2026
+## 5. Próxima etapa e contingência frontend — 28/11/2026
 
-O 8B está apto para commit após a validação da V12. A sessão de desenvolvimento será encerrada após a publicação do incremento por commit e push. A próxima etapa prevista é a consolidação operacional e a preparação da conclusão do backend, conforme o cronograma e os requisitos acadêmicos vigentes.
+O 9A está tecnicamente concluído na árvore de trabalho. A próxima etapa prevista é o 9B, limitado às reversões operacionais indispensáveis para concluir o backend.
 
 **Regra da escrituração efetiva.** Lançamentos `CONFIRMADOS`, inclusive os estornos confirmados, e lançamentos originais `ESTORNADOS` integram a escrituração. Cada um produz efeitos na sua própria data contábil, respeitado o corte do relatório. Lançamentos em `RASCUNHO` ficam fora dos saldos. O original e seu estorno podem produzir efeitos em períodos diferentes.
 
@@ -299,9 +317,8 @@ O manual PDF acadêmico 1.0, de outubro de 2026, é a referência normativa da i
 ## 6. Backlog e riscos
 
 - P0 — Implementar o estorno operacional auditável, com reversão conjunta do estoque e da escrituração.
-- Importar lotes iniciais e implementar a conciliação geral com o Razão para saldos externos ou importados. Conciliar os saldos contábeis de abertura com os controles operacionais de estoque e ativos, evitando lançamentos duplicados.
-- P0 — Consolidar as verificações operacionais de estoque e ativos e preparar a conclusão do backend. A regularização administrativa de calendários históricos com lacunas permanece pendente. [Decisões e cronograma](decisoes-e-cronograma.md).
-- Modelar a baixa patrimonial e o estorno operacional da aquisição e da depreciação. Conciliar bens e saldos patrimoniais importados antes da escrituração operacional correspondente.
+- Regularizar calendários históricos com lacunas e saldos iniciais legados fora das condições atuais de importação. [Decisões e cronograma](decisoes-e-cronograma.md).
+- Modelar a baixa patrimonial e avaliar as reversões de aquisição e depreciação conforme a necessidade dos fluxos operacionais.
 - Implementar uma operação autorizada, transacional e auditável para cancelar ou excluir rascunhos manuais.
 - Definir a regularização de contas inativas com saldos relevantes antes de encerrar ou transportar seus valores.
 - Implementar a auditoria geral dos fluxos. Os eventos do fechamento, da continuidade, das compras, das vendas e das aquisições patrimoniais já são registrados localmente.
@@ -340,4 +357,6 @@ O manual PDF acadêmico 1.0, de outubro de 2026, é a referência normativa da i
 - 27/11 — A V11 corrigiu o cadastro retroativo de competências e a suíte aprovou 174 testes. A revisão consolidada identificou o bloqueio de continuidade quando o cadastro salta o sucessor imediato. O 8B permanece na árvore de trabalho.
 - 27/11 — A V12 corrigiu a sequência anual. A suíte aprovou 179 testes e a revisão considerou o 8B tecnicamente concluído e apto para commit. Publicação pendente.
 
-Fontes consultadas incluem o planejamento de 22/11, os registros de desenvolvimento fornecidos pelo desenvolvedor e os relatórios Surefire locais conferidos em 27/11.
+- 28/11 — 9A concluído na árvore de trabalho com conciliação operacional, importações, proteção dos fechamentos e integralização inicial de Mercadorias. Suíte integral com 196 testes aprovados e schema V14.
+
+Fontes consultadas incluem o planejamento de 22/11, os registros de desenvolvimento fornecidos pelo desenvolvedor e os relatórios Surefire locais conferidos em 28/11.

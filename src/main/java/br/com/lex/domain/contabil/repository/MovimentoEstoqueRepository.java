@@ -23,6 +23,38 @@ public class MovimentoEstoqueRepository {
                 """, LocalDate.class, empresaId, produtoId);
     }
 
+    public Posicao posicaoAte(UUID empresaId, LocalDate dataBase) {
+        return jdbc.queryForObject("""
+                select count(*) as lotes, coalesce(sum(e.valor_total - consumo.valor), 0) as saldo
+                from lote_estoque l
+                join movimento_estoque e on e.id = l.entrada_id
+                cross join lateral (
+                    select coalesce(sum(a.valor), 0) as valor
+                    from alocacao_estoque a
+                    join movimento_estoque s on s.id = a.saida_id
+                    where a.entrada_id = l.entrada_id and s.data <= ?
+                ) consumo
+                where l.empresa_id = ? and e.data <= ?
+                """, (rs, linha) -> new Posicao(rs.getLong("lotes"), rs.getBigDecimal("saldo")),
+                dataBase, empresaId, dataBase);
+    }
+
+    public BigDecimal somarValorImportadoAte(UUID empresaId, LocalDate dataBase) {
+        return jdbc.queryForObject("""
+                select coalesce(sum(e.valor_total), 0)
+                from movimento_estoque e
+                join lancamento_contabil origem on origem.id = e.lancamento_id and origem.empresa_id = e.empresa_id
+                join lote_estoque l on l.entrada_id = e.id
+                where e.empresa_id = ? and e.data <= ? and origem.origem = 'ABERTURA'
+                """, BigDecimal.class, empresaId, dataBase);
+    }
+
+    public boolean existeVinculado(UUID empresaId, UUID lancamentoId) {
+        return Boolean.TRUE.equals(jdbc.queryForObject("""
+                select exists (select 1 from movimento_estoque where empresa_id = ? and lancamento_id = ?)
+                """, Boolean.class, empresaId, lancamentoId));
+    }
+
     public void inserir(Movimento m) {
         jdbc.update("""
                 insert into movimento_estoque
@@ -129,5 +161,8 @@ public class MovimentoEstoqueRepository {
     }
 
     public record Saldo(BigDecimal quantidade, BigDecimal valor) {
+    }
+
+    public record Posicao(long lotes, BigDecimal valor) {
     }
 }

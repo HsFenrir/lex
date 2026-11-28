@@ -15,6 +15,7 @@ import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.UUID;
 
 @Entity
@@ -59,6 +60,16 @@ public class AtivoPatrimonial {
     @JoinColumn(name = "lancamento_aquisicao_id")
     private LancamentoContabil lancamentoAquisicao;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "lancamento_abertura_id")
+    private LancamentoContabil lancamentoAbertura;
+    @Column(name = "depreciacao_inicial", nullable = false, precision = 19, scale = 2)
+    private BigDecimal depreciacaoInicial = BigDecimal.ZERO.setScale(2);
+    @Column(name = "meses_consumidos_inicio", nullable = false)
+    private int mesesConsumidosInicio;
+    @Column(name = "inicio_depreciacao_lex")
+    private LocalDate inicioDepreciacaoLex;
+
     public AtivoPatrimonial(UUID empresaId, UUID planoContasId, UUID usuarioId, String codigo, String descricao,
                             UUID contaPatrimonialId, UUID contaRedutoraId, UUID contaDespesaId,
                             LocalDate dataAquisicao, LocalDate dataDisponibilidade, BigDecimal custoAquisicao,
@@ -80,10 +91,44 @@ public class AtivoPatrimonial {
     }
 
     public void vincularAquisicao(LancamentoContabil lancamento) {
-        if (lancamentoAquisicao != null) {
+        if (lancamentoAquisicao != null || lancamentoAbertura != null) {
             throw new IllegalStateException("O ativo já possui lançamento de aquisição.");
         }
         lancamentoAquisicao = lancamento;
+    }
+
+    public void vincularAbertura(LancamentoContabil abertura, BigDecimal acumulado, int mesesConsumidos,
+                                 YearMonth inicioLex) {
+        if (lancamentoAquisicao != null || lancamentoAbertura != null) {
+            throw new IllegalStateException("O ativo já possui vínculo contábil.");
+        }
+        lancamentoAbertura = abertura;
+        depreciacaoInicial = acumulado;
+        mesesConsumidosInicio = mesesConsumidos;
+        inicioDepreciacaoLex = inicioLex.atDay(1);
+    }
+
+    public boolean isImportado() {
+        return lancamentoAbertura != null;
+    }
+
+    public YearMonth primeiraCompetenciaLex() {
+        if (!depreciavel || dataDisponibilidade == null) {
+            return null;
+        }
+        YearMonth disponibilidade = YearMonth.from(dataDisponibilidade);
+        if (inicioDepreciacaoLex != null && disponibilidade.atDay(1).isBefore(inicioDepreciacaoLex)) {
+            return YearMonth.from(inicioDepreciacaoLex);
+        }
+        return disponibilidade;
+    }
+
+    public int vidaUtilInicialLex() {
+        return depreciavel ? vidaUtilMeses - mesesConsumidosInicio : 0;
+    }
+
+    public BigDecimal baseInicialLex() {
+        return baseDepreciavel().subtract(depreciacaoInicial);
     }
 
     public BigDecimal baseDepreciavel() {

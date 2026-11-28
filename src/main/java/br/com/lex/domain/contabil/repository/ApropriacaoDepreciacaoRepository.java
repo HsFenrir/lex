@@ -5,9 +5,12 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.YearMonth;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Repository
@@ -15,6 +18,34 @@ import java.util.UUID;
 public class ApropriacaoDepreciacaoRepository {
 
     private final JdbcTemplate jdbc;
+
+    public Map<UUID, SaldoRedutora> somarPorRedutoraAte(UUID empresaId, LocalDate dataBase) {
+        return jdbc.query("""
+                select a.conta_redutora_id, sum(a.depreciacao_inicial) as importado,
+                       sum(a.depreciacao_inicial + d.valor) as acumulado
+                from ativo_patrimonial a
+                left join lancamento_contabil abertura on abertura.id = a.lancamento_abertura_id
+                cross join lateral (
+                    select coalesce(sum(d.valor), 0) as valor
+                    from apropriacao_depreciacao d
+                    where d.empresa_id = a.empresa_id and d.ativo_id = a.id and d.competencia <= ?
+                ) d
+                where a.empresa_id = ? and coalesce(abertura.data, a.data_aquisicao) <= ?
+                  and a.conta_redutora_id is not null
+                group by a.conta_redutora_id
+                """, rs -> {
+            Map<UUID, SaldoRedutora> saldos = new HashMap<>();
+            while (rs.next()) {
+                saldos.put(rs.getObject("conta_redutora_id", UUID.class),
+                        new SaldoRedutora(rs.getBigDecimal("acumulado"), rs.getBigDecimal("importado")));
+            }
+            return saldos;
+        }, YearMonth.from(dataBase).minusMonths(dataBase.getDayOfMonth() == dataBase.lengthOfMonth() ? 0 : 1)
+                .atDay(1), empresaId, dataBase);
+    }
+
+    public record SaldoRedutora(BigDecimal acumulado, BigDecimal importado) {
+    }
 
     public List<ApropriacaoDepreciacao> listar(UUID empresaId, UUID ativoId) {
         return consultar("and d.ativo_id = ?", empresaId, ativoId);
@@ -49,7 +80,7 @@ public class ApropriacaoDepreciacaoRepository {
     public List<String> buscarPendenciasAte(UUID empresaId, LocalDate dataFinal) {
         return jdbc.queryForList("""
                 select a.codigo || ' (' || to_char(
-                    date_trunc('month', a.data_disponibilidade::timestamp) + h.meses * interval '1 month', 'YYYY-MM'
+                    proxima.competencia, 'YYYY-MM'
                 ) || ')'
                 from ativo_patrimonial a
                 cross join lateral (
@@ -57,10 +88,14 @@ public class ApropriacaoDepreciacaoRepository {
                     from apropriacao_depreciacao d
                     where d.empresa_id = a.empresa_id and d.ativo_id = a.id and d.competencia <= ?
                 ) h
+                cross join lateral (
+                    select greatest(date_trunc('month', a.data_disponibilidade::timestamp), a.inicio_depreciacao_lex::timestamp)
+                        + h.meses * interval '1 month' as competencia
+                ) proxima
                 where a.empresa_id = ? and a.depreciavel and a.data_disponibilidade <= ?
-                  and h.meses < a.vida_util_meses and h.acumulado < a.custo_aquisicao - a.valor_residual
-                  and date_trunc('month', a.data_disponibilidade::timestamp)
-                      + h.meses * interval '1 month' <= ?
+                  and h.meses + a.meses_consumidos_inicio < a.vida_util_meses
+                  and h.acumulado + a.depreciacao_inicial < a.custo_aquisicao - a.valor_residual
+                  and proxima.competencia <= ?
                 order by a.codigo
                 """, String.class, dataFinal, empresaId, dataFinal, dataFinal);
     }
